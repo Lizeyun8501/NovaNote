@@ -46,6 +46,24 @@ pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
 
+// AI integration (native - uses reqwest for HTTP)
+#[cfg(feature = "native")]
+pub mod ai;
+#[cfg(feature = "native")]
+pub use ai::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult, generate_tags, generate_summary, writing_assist, check_ollama};
+
+// Email import (native - uses mailparse)
+#[cfg(feature = "native")]
+pub mod email_import;
+#[cfg(feature = "native")]
+pub use email_import::{parse_eml_file, parse_eml_content, email_to_markdown, ParsedEmail};
+
+// Vector search / semantic search (native - uses Ollama embedding API)
+#[cfg(feature = "native")]
+pub mod vector_search;
+#[cfg(feature = "native")]
+pub use vector_search::{generate_embedding, cosine_similarity, serialize_embedding, deserialize_embedding, VectorSearchResult, VectorSearchConfig};
+
 // Native-only modules (not available on WASM)
 #[cfg(feature = "native")]
 pub mod sync;

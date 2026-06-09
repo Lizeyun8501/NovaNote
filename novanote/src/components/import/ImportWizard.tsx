@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { NoteMeta } from "../../types";
 
-type ImportSource = "obsidian" | "notion" | "joplin";
+type ImportSource = "obsidian" | "notion" | "joplin" | "email";
 
 interface ImportWizardProps {
   isOpen: boolean;
@@ -33,6 +33,14 @@ const SOURCE_INFO: Record<ImportSource, { label: string; description: string; ic
     selectLabel: "Select JEX File",
     isDirectory: false,
     filter: { name: "Joplin Export", extensions: ["jex"] },
+  },
+  email: {
+    label: "Email (.eml)",
+    description: "Import an email file (.eml) and convert it to a Markdown note",
+    icon: "✉️",
+    selectLabel: "Select .eml Email File",
+    isDirectory: false,
+    filter: { name: "Email File", extensions: ["eml"] },
   },
 };
 
@@ -65,18 +73,34 @@ export default function ImportWizard({ isOpen, onClose, onImportComplete }: Impo
 
       setImporting(true);
 
-      const commandMap: Record<ImportSource, string> = {
-        obsidian: "vault_import_obsidian",
-        notion: "vault_import_notion",
-        joplin: "vault_import_joplin",
-      };
+      if (selectedSource === "email") {
+        // Email import uses a different command
+        const filename: string = await invoke("import_email_file", {
+          emlPath: sourcePath,
+        });
+        setResult({ count: 1 });
+        onImportComplete([{
+          id: filename,
+          title: filename.replace(/\.md$/, ""),
+          relative_path: filename,
+          tags: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }]);
+      } else {
+        const commandMap: Record<string, string> = {
+          obsidian: "vault_import_obsidian",
+          notion: "vault_import_notion",
+          joplin: "vault_import_joplin",
+        };
 
-      const importedNotes: NoteMeta[] = await invoke(commandMap[selectedSource], {
-        sourcePath,
-      });
+        const importedNotes: NoteMeta[] = await invoke(commandMap[selectedSource], {
+          sourcePath,
+        });
 
-      setResult({ count: importedNotes.length });
-      onImportComplete(importedNotes);
+        setResult({ count: importedNotes.length });
+        onImportComplete(importedNotes);
+      }
     } catch (err) {
       setError(String(err));
     } finally {

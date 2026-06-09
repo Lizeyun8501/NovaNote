@@ -12,6 +12,9 @@ import CanvasEditor from "./components/canvas/CanvasEditor";
 import CommandPalette from "./components/command-palette/CommandPalette";
 import { SetupPassword } from "./components/sync/SetupPassword";
 import { SyncSettings } from "./components/sync/SyncSettings";
+import AIPanel from "./components/ai/AIPanel";
+import CalendarView from "./components/calendar/CalendarView";
+import PluginMarket from "./components/plugin/PluginMarket";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
@@ -51,6 +54,10 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [showSyncSettings, setShowSyncSettings] = useState(false);
   const [showPasswordSetup, setShowPasswordSetup] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [showPluginMarket, setShowPluginMarket] = useState(false);
+  const [aiSelectedText, setAiSelectedText] = useState<string>("");
   const isMobile = useMediaQuery("(max-width: 768px)");
 
   // Cmd/Ctrl+P keyboard shortcut to open command palette
@@ -390,6 +397,117 @@ function App() {
     }
   }, []);
 
+  // Handle AI panel - tags generated
+  const handleAITagsGenerated = useCallback(async (tags: string[]) => {
+    try {
+      // Add tags to current note by updating its content with frontmatter tags
+      const path = currentPathRef.current;
+      if (!path) return;
+      const content: string = await invoke("vault_read_note", { relativePath: path });
+      // Add or update tags in frontmatter
+      let newContent = content;
+      const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+      if (frontmatterRegex.test(content)) {
+        // Update existing tags
+        newContent = content.replace(/^tags:\s*\[.*?\]/m, `tags: [${tags.map((t) => `"${t}"`).join(", ")}]`);
+        if (newContent === content) {
+          // Add tags line to existing frontmatter
+          newContent = content.replace(/(^---\n)/, `$1tags: [${tags.map((t) => `"${t}"`).join(", ")}]\n`);
+        }
+      } else {
+        // Add new frontmatter
+        const tagsLine = `---\ntags: [${tags.map((t) => `"${t}"`).join(", ")}]\n---\n\n`;
+        newContent = tagsLine + content;
+      }
+      await invoke("vault_write_note", { relativePath: path, content: newContent });
+      // Refresh notes
+      const noteList: NoteMeta[] = await invoke("vault_list_notes");
+      setNotes(noteList);
+      setFileTree(buildFileTree(noteList));
+    } catch (err) {
+      console.error("Failed to apply AI tags:", err);
+    }
+  }, []);
+
+  // Handle AI panel - summary generated
+  const handleAISummaryGenerated = useCallback(async (summary: string) => {
+    try {
+      const path = currentPathRef.current;
+      if (!path) return;
+      const content: string = await invoke("vault_read_note", { relativePath: path });
+      // Add summary to frontmatter
+      let newContent = content;
+      const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+      if (frontmatterRegex.test(content)) {
+        newContent = content.replace(/^summary:\s*.*\n?/m, "");
+        newContent = newContent.replace(/(^---\n)/, `$1summary: "${summary.replace(/"/g, '\\"')}"\n`);
+      } else {
+        const summaryLine = `---\nsummary: "${summary.replace(/"/g, '\\"')}"\n---\n\n`;
+        newContent = summaryLine + content;
+      }
+      await invoke("vault_write_note", { relativePath: path, content: newContent });
+    } catch (err) {
+      console.error("Failed to apply AI summary:", err);
+    }
+  }, []);
+
+  // Handle AI panel - writing result
+  const handleAIWritingResult = useCallback((_text: string) => {
+    // The result is displayed in the AI panel; user can copy it
+  }, []);
+
+  // Handle calendar date selection
+  const handleCalendarSelectDate = useCallback(
+    async (dateStr: string) => {
+      setShowCalendar(false);
+      if (!vaultPath) return;
+
+      // Parse YYYY-MM-DD and create a daily note path
+      const parts = dateStr.split("-");
+      const dailyPath = `daily/${parts[0]}-${parts[1]}-${parts[2]}.md`;
+
+      try {
+        const content: string = await invoke("vault_read_note", { relativePath: dailyPath });
+        setSelectedPath(dailyPath);
+        currentPathRef.current = dailyPath;
+        setNoteContent(content);
+        setHtmlContent(content);
+        setCanvasPath(null);
+      } catch {
+        // Create the daily note
+        try {
+          const template = getDailyNoteTemplate();
+          await invoke("vault_write_note", { relativePath: dailyPath, content: template });
+          await invoke("vault_scan");
+          const noteList: NoteMeta[] = await invoke("vault_list_notes");
+          setNotes(noteList);
+          setFileTree(buildFileTree(noteList));
+          setSelectedPath(dailyPath);
+          currentPathRef.current = dailyPath;
+          setNoteContent(template);
+          setHtmlContent(template);
+          setCanvasPath(null);
+        } catch (writeErr) {
+          console.error("Failed to create daily note from calendar:", writeErr);
+        }
+      }
+    },
+    [vaultPath],
+  );
+
+  // Build set of dates that have notes (for calendar dot indicators)
+  const notesWithDates = useMemo(() => {
+    const dates = new Set<string>();
+    for (const note of notes) {
+      // Match daily note pattern: daily/YYYY-MM-DD.md
+      const match = note.relative_path.match(/daily\/(\d{4}-\d{2}-\d{2})\.md$/);
+      if (match) {
+        dates.add(match[1]);
+      }
+    }
+    return dates;
+  }, [notes]);
+
   // Handle import complete - refresh the file tree
   const handleImportComplete = useCallback(async (_importedNotes: NoteMeta[]) => {
     try {
@@ -446,6 +564,27 @@ function App() {
         category: "File",
         execute: () => setShowImportWizard(true),
       },
+      {
+        id: "ai-assistant",
+        label: "AI Assistant",
+        shortcut: undefined,
+        category: "AI",
+        execute: () => setShowAIPanel(true),
+      },
+      {
+        id: "calendar-view",
+        label: "Open Calendar",
+        shortcut: undefined,
+        category: "View",
+        execute: () => setShowCalendar(true),
+      },
+      {
+        id: "plugin-market",
+        label: "Plugin Marketplace",
+        shortcut: undefined,
+        category: "Plugins",
+        execute: () => setShowPluginMarket(true),
+      },
     ],
     [handleNewNote, handleNewCanvas, handleOpenDailyNote],
   );
@@ -466,6 +605,9 @@ function App() {
       onOpenTemplateSelector={() => setShowTemplateSelector(true)}
       onImport={() => setShowImportWizard(true)}
       onSyncClick={() => setShowSyncSettings(true)}
+      onOpenAI={() => setShowAIPanel(true)}
+      onOpenCalendar={() => setShowCalendar(true)}
+      onOpenPlugins={() => setShowPluginMarket(true)}
     />
   );
 
@@ -551,6 +693,7 @@ function App() {
                 onChange={handleChange}
                 placeholder="Start writing your note..."
                 onLinkClick={handleLinkClick}
+                onSelectionChange={setAiSelectedText}
               />
             </div>
           ) : (
@@ -614,6 +757,32 @@ function App() {
             setShowPasswordSetup(false);
           }}
           onCancel={() => setShowPasswordSetup(false)}
+        />
+      )}
+
+      {showAIPanel && (
+        <AIPanel
+          currentNotePath={selectedPath}
+          selectedText={aiSelectedText}
+          onTagsGenerated={handleAITagsGenerated}
+          onSummaryGenerated={handleAISummaryGenerated}
+          onWritingResult={handleAIWritingResult}
+          onClose={() => setShowAIPanel(false)}
+        />
+      )}
+
+      {showCalendar && (
+        <CalendarView
+          onSelectDate={handleCalendarSelectDate}
+          onClose={() => setShowCalendar(false)}
+          notesWithDates={notesWithDates}
+        />
+      )}
+
+      {showPluginMarket && (
+        <PluginMarket
+          isOpen={showPluginMarket}
+          onClose={() => setShowPluginMarket(false)}
         />
       )}
     </>

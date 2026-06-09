@@ -1,4 +1,8 @@
 use novanote_core::{NoteMeta, Vault};
+use novanote_core::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult};
+use novanote_core::{parse_eml_file, email_to_markdown};
+use novanote_core::VectorSearchResult;
+use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -7,6 +11,7 @@ use tauri::State;
 
 pub struct AppState {
     pub vault: Mutex<Option<Vault>>,
+    pub plugin_host: Mutex<PluginHost>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -299,12 +304,279 @@ fn sync_set_master_password(state: State<AppState>, password: String) -> Result<
     Ok(())
 }
 
+#[tauri::command]
+async fn ai_check_ollama(base_url: String) -> Result<bool, String> {
+    let config = OllamaConfig {
+        base_url,
+        ..OllamaConfig::default()
+    };
+    novanote_core::check_ollama(&config).await
+}
+
+#[tauri::command]
+async fn ai_generate_tags(state: State<'_, AppState>, base_url: String, model: String, relative_path: String) -> Result<AITagResult, String> {
+    let content = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let full_path = vault.root_path.join(&relative_path);
+        std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
+    };
+
+    let config = OllamaConfig {
+        base_url,
+        model,
+        ..OllamaConfig::default()
+    };
+    novanote_core::generate_tags(&config, &content).await
+}
+
+#[tauri::command]
+async fn ai_summarize(state: State<'_, AppState>, base_url: String, model: String, relative_path: String) -> Result<AISummaryResult, String> {
+    let content = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let full_path = vault.root_path.join(&relative_path);
+        std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
+    };
+
+    let config = OllamaConfig {
+        base_url,
+        model,
+        ..OllamaConfig::default()
+    };
+    novanote_core::generate_summary(&config, &content).await
+}
+
+#[tauri::command]
+async fn ai_writing_assist(base_url: String, model: String, text: String, mode: String) -> Result<WritingAssistResult, String> {
+    let assist_mode = match mode.as_str() {
+        "continue" => WritingAssistMode::Continue,
+        "polish" => WritingAssistMode::Polish,
+        "translate_to_chinese" => WritingAssistMode::TranslateToChinese,
+        "translate_to_english" => WritingAssistMode::TranslateToEnglish,
+        _ => return Err(format!("Unknown writing assist mode: {}", mode)),
+    };
+
+    let config = OllamaConfig {
+        base_url,
+        model,
+        ..OllamaConfig::default()
+    };
+    novanote_core::writing_assist(&config, &text, assist_mode).await
+}
+
+#[tauri::command]
+fn import_email_file(state: State<AppState>, eml_path: String) -> Result<String, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+
+    let email = parse_eml_file(Path::new(&eml_path)).map_err(|e| e.to_string())?;
+    let markdown = email_to_markdown(&email);
+
+    // Generate a filename from subject + date
+    let sanitized_subject = email.subject
+        .chars()
+        .take(50)
+        .map(|c: char| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' })
+        .collect::<String>()
+        .trim()
+        .replace("  ", " ")
+        .replace(' ', "-");
+    let filename = format!("email-{}-{}.md", sanitized_subject, chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+    let full_path = vault.root_path.join(&filename);
+    std::fs::write(&full_path, &markdown).map_err(|e| e.to_string())?;
+    vault.index_file(&full_path).map_err(|e| e.to_string())?;
+
+    Ok(filename)
+}
+
+#[tauri::command]
+fn import_email_content(state: State<AppState>, content: String) -> Result<String, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+
+    let email = novanote_core::parse_eml_content(content.as_bytes()).map_err(|e: String| e.to_string())?;
+    let markdown = email_to_markdown(&email);
+
+    let sanitized_subject = email.subject
+        .chars()
+        .take(50)
+        .map(|c: char| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' })
+        .collect::<String>()
+        .trim()
+        .replace("  ", " ")
+        .replace(' ', "-");
+    let filename = format!("email-{}-{}.md", sanitized_subject, chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+    let full_path = vault.root_path.join(&filename);
+    std::fs::write(&full_path, &markdown).map_err(|e| e.to_string())?;
+    vault.index_file(&full_path).map_err(|e| e.to_string())?;
+
+    Ok(filename)
+}
+
+#[tauri::command]
+async fn ai_semantic_search(
+    state: State<'_, AppState>,
+    query: String,
+    base_url: String,
+    model: String,
+) -> Result<Vec<VectorSearchResult>, String> {
+    // Generate embedding for the query
+    let embedding = novanote_core::generate_embedding(&base_url, &model, &query)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.semantic_search_with_embedding(&embedding).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_index_embedding(
+    state: State<'_, AppState>,
+    base_url: String,
+    model: String,
+    relative_path: String,
+) -> Result<(), String> {
+    let (content, vault_exists) = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let full_path = vault.root_path.join(&relative_path);
+        let content = std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
+        (content, true)
+    };
+    
+    let embedding = novanote_core::generate_embedding(&base_url, &model, &content).await
+        .map_err(|e| e.to_string())?;
+
+    if vault_exists {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        vault.store_embedding(&relative_path, &embedding, &model).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn ai_index_all_embeddings(
+    state: State<'_, AppState>,
+    base_url: String,
+    model: String,
+) -> Result<(usize, usize), String> {
+    let note_paths: Vec<(String, String)> = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        vault.list_notes().map_err(|e| e.to_string())?.into_iter().map(|n| {
+            let full_path = vault.root_path.join(&n.relative_path);
+            (n.relative_path, full_path.to_string_lossy().to_string())
+        }).collect()
+    };
+
+    let mut indexed = 0usize;
+    let mut errors = 0usize;
+
+    for (relative_path, full_path) in note_paths {
+        let content = match std::fs::read_to_string(&full_path) {
+            Ok(c) => c,
+            Err(_) => { errors += 1; continue; }
+        };
+        
+        // Skip files that are too large
+        if content.len() > 10000 {
+            continue;
+        }
+
+        match novanote_core::generate_embedding(&base_url, &model, &content).await {
+            Ok(embedding) => {
+                let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+                let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+                if vault.store_embedding(&relative_path, &embedding, &model).is_ok() {
+                    indexed += 1;
+                } else {
+                    errors += 1;
+                }
+            }
+            Err(_) => { errors += 1; }
+        }
+    }
+
+    Ok((indexed, errors))
+}
+
+#[tauri::command]
+fn ai_embedding_status(state: State<AppState>) -> Result<(bool, i64), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let has = vault.has_embeddings().map_err(|e| e.to_string())?;
+    let count = vault.embedding_count().map_err(|e| e.to_string())?;
+    Ok((has, count))
+}
+
+#[tauri::command]
+fn plugin_list(state: State<AppState>) -> Result<Vec<PluginInfo>, String> {
+    let host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    Ok(host.list_plugins())
+}
+
+#[tauri::command]
+fn plugin_install(state: State<AppState>, name: String) -> Result<String, String> {
+    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+
+    // In a real app, this would download the .wasm file from a registry.
+    // For now, create a placeholder manifest and attempt to load from plugins dir.
+    let plugins_dir = host.plugins_dir().to_path_buf();
+    let wasm_path = plugins_dir.join(&name).with_extension("wasm");
+
+    let manifest = PluginManifest {
+        name: name.clone(),
+        version: "1.0.0".to_string(),
+        description: format!("{} plugin", name),
+        author: "community".to_string(),
+        permissions: vec!["read_notes".to_string()],
+        wasm_module_path: wasm_path,
+    };
+
+    host.load_plugin(manifest).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn plugin_uninstall(state: State<AppState>, plugin_id: String) -> Result<(), String> {
+    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    host.unload_plugin(&plugin_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn plugin_enable(state: State<AppState>, plugin_id: String) -> Result<(), String> {
+    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    // Re-enable by reloading the stored manifest
+    let info = host.list_plugins().into_iter().find(|p| p.id == plugin_id);
+    if let Some(info) = info {
+        let manifest = info.manifest.clone();
+        host.load_plugin(manifest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn plugin_disable(state: State<AppState>, plugin_id: String) -> Result<(), String> {
+    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    host.unload_plugin(&plugin_id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Determine plugins directory
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let plugins_dir = std::path::PathBuf::from(home).join(".novanote").join("plugins");
+    std::fs::create_dir_all(&plugins_dir).ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             vault: Mutex::new(None),
+            plugin_host: Mutex::new(PluginHost::new(plugins_dir)),
         })
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -333,7 +605,22 @@ pub fn run() {
             sync_enable,
             sync_disable,
             sync_get_status,
-            sync_set_master_password
+            sync_set_master_password,
+            ai_check_ollama,
+            ai_generate_tags,
+            ai_summarize,
+            ai_writing_assist,
+            import_email_file,
+            import_email_content,
+            ai_semantic_search,
+            ai_index_embedding,
+            ai_index_all_embeddings,
+            ai_embedding_status,
+            plugin_list,
+            plugin_install,
+            plugin_uninstall,
+            plugin_enable,
+            plugin_disable
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

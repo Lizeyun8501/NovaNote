@@ -23,6 +23,9 @@ interface SidebarProps {
   onOpenTemplateSelector?: () => void;
   onImport?: () => void;
   onSyncClick?: () => void;
+  onOpenAI?: () => void;
+  onOpenCalendar?: () => void;
+  onOpenPlugins?: () => void;
 }
 
 export default function Sidebar({
@@ -42,6 +45,9 @@ export default function Sidebar({
   onOpenTemplateSelector,
   onImport,
   onSyncClick,
+  onOpenAI,
+  onOpenCalendar,
+  onOpenPlugins,
 }: SidebarProps) {
   const [collapsedInternal, setCollapsedInternal] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
@@ -101,7 +107,7 @@ export default function Sidebar({
 
       {/* Action Bar */}
       {!collapsed && (
-        <ActionBar onOpenVault={onOpenVault} onNewNote={onNewNote} onNewCanvas={onNewCanvas} onOpenDailyNote={onOpenDailyNote} onOpenTemplateSelector={onOpenTemplateSelector} onImport={onImport} />
+        <ActionBar onOpenVault={onOpenVault} onNewNote={onNewNote} onNewCanvas={onNewCanvas} onOpenDailyNote={onOpenDailyNote} onOpenTemplateSelector={onOpenTemplateSelector} onImport={onImport} onOpenAI={onOpenAI} onOpenCalendar={onOpenCalendar} onOpenPlugins={onOpenPlugins} />
       )}
 
       {/* File Tree */}

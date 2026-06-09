@@ -7,9 +7,22 @@ interface ActionBarProps {
   onOpenDailyNote?: () => void;
   onOpenTemplateSelector?: () => void;
   onImport?: () => void;
+  onOpenAI?: () => void;
+  onOpenCalendar?: () => void;
+  onOpenPlugins?: () => void;
 }
 
-export default function ActionBar({ onOpenVault, onNewNote, onNewCanvas, onOpenDailyNote, onOpenTemplateSelector, onImport }: ActionBarProps) {
+export default function ActionBar({
+  onOpenVault,
+  onNewNote,
+  onNewCanvas,
+  onOpenDailyNote,
+  onOpenTemplateSelector,
+  onImport,
+  onOpenAI,
+  onOpenCalendar,
+  onOpenPlugins,
+}: ActionBarProps) {
   const handleOpenVault = async () => {
     const selected = await open({
       directory: true,
@@ -100,6 +113,45 @@ export default function ActionBar({ onOpenVault, onNewNote, onNewCanvas, onOpenD
           title="Import Notes"
         >
           ⬇
+        </button>
+      )}
+      {onOpenAI && (
+        <button
+          onClick={onOpenAI}
+          className="px-3 py-1.5 rounded text-sm transition-colors"
+          style={{
+            backgroundColor: "var(--bg-hover)",
+            color: "var(--text-secondary)",
+          }}
+          title="AI Assistant"
+        >
+          🤖
+        </button>
+      )}
+      {onOpenCalendar && (
+        <button
+          onClick={onOpenCalendar}
+          className="px-3 py-1.5 rounded text-sm transition-colors"
+          style={{
+            backgroundColor: "var(--bg-hover)",
+            color: "var(--text-secondary)",
+          }}
+          title="Calendar"
+        >
+          📆
+        </button>
+      )}
+      {onOpenPlugins && (
+        <button
+          onClick={onOpenPlugins}
+          className="px-3 py-1.5 rounded text-sm transition-colors"
+          style={{
+            backgroundColor: "var(--bg-hover)",
+            color: "var(--text-secondary)",
+          }}
+          title="Plugins"
+        >
+          🧩
         </button>
       )}
     </div>

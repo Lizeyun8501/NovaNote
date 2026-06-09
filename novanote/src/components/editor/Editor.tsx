@@ -5,6 +5,7 @@ import { TagHighlight } from "./TagHighlightExtension";
 import { htmlToMarkdown } from "../../utils/markdown";
 import { Wikilink } from "./WikilinkExtension";
 import WikilinkSuggestion from "./WikilinkSuggestion";
+import { useEffect } from "react";
 import "./Editor.css";
 
 interface EditorProps {
@@ -12,6 +13,7 @@ interface EditorProps {
   onChange: (html: string, markdown: string) => void;
   placeholder?: string;
   onLinkClick?: (target: string) => void;
+  onSelectionChange?: (selectedText: string) => void;
 }
 
 export default function Editor({
@@ -19,6 +21,7 @@ export default function Editor({
   onChange,
   placeholder,
   onLinkClick,
+  onSelectionChange,
 }: EditorProps) {
   const editor = useEditor({
     extensions: [
@@ -49,6 +52,22 @@ export default function Editor({
   if (!editor) {
     return null;
   }
+
+  // Notify parent about text selection changes
+  useEffect(() => {
+    if (!editor || !onSelectionChange) return;
+    const handleSelectionUpdate = () => {
+      const { from, to, empty } = editor.state.selection;
+      if (!empty && onSelectionChange) {
+        const selectedText = editor.state.doc.textBetween(from, to);
+        onSelectionChange(selectedText);
+      }
+    };
+    editor.on("selectionUpdate", handleSelectionUpdate);
+    return () => {
+      editor.off("selectionUpdate", handleSelectionUpdate);
+    };
+  }, [editor, onSelectionChange]);
 
   const runAction = (action: string, level?: number) => {
     switch (action) {

@@ -30,4 +30,5 @@ walkdir = "2"
 tar = "0.4"
 pulldown-cmark = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
+mailparse = "0.15"
 tokio = { version = "1", features = ["sync", "time"] }

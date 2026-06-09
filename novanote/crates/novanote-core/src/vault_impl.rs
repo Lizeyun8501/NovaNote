@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine};
+use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult};
 
 pub struct Vault {
     pub root_path: PathBuf,
@@ -120,6 +120,14 @@ impl Vault {
             );
             CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_path);
             CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_path);
+            CREATE TABLE IF NOT EXISTS embeddings (
+                relative_path TEXT PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                generated_at TEXT NOT NULL,
+                model TEXT NOT NULL,
+                FOREIGN KEY (relative_path) REFERENCES notes(relative_path) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_embeddings_path ON embeddings(relative_path);
             ",
         )?;
         Ok(())
@@ -276,6 +284,77 @@ impl Vault {
         })
         .collect();
         Ok(notes)
+    }
+
+    /// Store an embedding vector for a note
+    pub fn store_embedding(&self, relative_path: &str, embedding: &[f32], model: &str) -> Result<(), VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let embedding_blob = crate::vector_search::serialize_embedding(embedding);
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO embeddings (relative_path, embedding, generated_at, model)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(relative_path) DO UPDATE SET
+                embedding = excluded.embedding, generated_at = excluded.generated_at, model = excluded.model",
+            rusqlite::params![relative_path, embedding_blob, now, model],
+        )?;
+        Ok(())
+    }
+
+    /// Perform semantic search using stored embeddings and cosine similarity.
+    /// `query_embedding` is the embedding vector of the search query (generated externally).
+    pub fn semantic_search_with_embedding(&self, query_embedding: &[f32]) -> Result<Vec<VectorSearchResult>, VaultError> {
+        // Get all stored embeddings and compute similarity
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT e.relative_path, e.embedding, n.title
+             FROM embeddings e
+             LEFT JOIN notes n ON e.relative_path = n.relative_path"
+        )?;
+
+        let mut results: Vec<VectorSearchResult> = Vec::new();
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            let title: Option<String> = row.get(2)?;
+            Ok((path, blob, title))
+        })?;
+
+        for row in rows {
+            if let Ok((path, blob, title)) = row {
+                let doc_embedding = crate::vector_search::deserialize_embedding(&blob);
+                let similarity = crate::vector_search::cosine_similarity(query_embedding, &doc_embedding);
+                if similarity > 0.3 {
+                    results.push(VectorSearchResult {
+                        relative_path: path,
+                        title: title.unwrap_or_default(),
+                        similarity,
+                    });
+                }
+            }
+        }
+
+        // Sort by similarity descending
+        results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Limit results
+        results.truncate(20);
+
+        Ok(results)
+    }
+
+    /// Check if semantic search is available (has indexed embeddings)
+    pub fn has_embeddings(&self) -> Result<bool, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        Ok(count > 0)
+    }
+
+    /// Get count of indexed embeddings
+    pub fn embedding_count(&self) -> Result<i64, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     pub fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError> {

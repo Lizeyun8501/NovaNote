@@ -4,11 +4,19 @@ import type { NoteMeta } from "../../types";
 
 export type { NoteMeta };
 
+interface SemanticResult {
+  relative_path: string;
+  title: string;
+  similarity: number;
+}
+
 interface SearchBarProps {
   onSelect: (note: NoteMeta) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
+
+type SearchMode = "fts" | "regex" | "semantic";
 
 function highlightMatch(text: string, query: string): string {
   if (!query.trim()) return escapeHtml(text);
@@ -58,8 +66,12 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [regexMode, setRegexMode] = useState(false);
+  const [searchMode, setSearchMode] = useState<SearchMode>("fts");
   const [regexError, setRegexError] = useState<string | null>(null);
+  const [semanticResults, setSemanticResults] = useState<SemanticResult[]>([]);
+  const [semanticBaseUrl, setSemanticBaseUrl] = useState("http://localhost:11434");
+  const [semanticModel, setSemanticModel] = useState("nomic-embed-text");
+  const [semanticSearching, setSemanticSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -86,6 +98,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
     if (open) {
       setQuery("");
       setResults([]);
+      setSemanticResults([]);
       setError(null);
       setRegexError(null);
       setSelectedIdx(0);
@@ -93,8 +106,9 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
     }
   }, [open]);
 
-  // Search when debounced query changes
+  // Search when debounced query changes (FTS and regex)
   useEffect(() => {
+    if (searchMode === "semantic") return; // semantic is manual trigger
     if (!debouncedQuery.trim()) {
       setResults([]);
       setError(null);
@@ -106,7 +120,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
     setError(null);
     setRegexError(null);
 
-    const invokeSearch = regexMode
+    const invokeSearch = searchMode === "regex"
       ? invoke<NoteMeta[]>("vault_search_regex", { pattern: debouncedQuery })
       : invoke<NoteMeta[]>("vault_search", { query: debouncedQuery });
 
@@ -120,7 +134,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
       .catch((err: unknown) => {
         if (!cancelled) {
           const errMsg = String(err);
-          if (regexMode && errMsg.includes("Invalid regex")) {
+          if (searchMode === "regex" && errMsg.includes("Invalid regex")) {
             setRegexError(errMsg);
           } else {
             setError(errMsg);
@@ -134,20 +148,44 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, regexMode]);
+  }, [debouncedQuery, searchMode]);
+
+  // Semantic search handler (manual trigger with Enter)
+  const handleSemanticSearch = useCallback(async () => {
+    if (!query.trim()) return;
+    setSemanticSearching(true);
+    setError(null);
+    setSemanticResults([]);
+    try {
+      const data: SemanticResult[] = await invoke("ai_semantic_search", {
+        query: query.trim(),
+        baseUrl: semanticBaseUrl,
+        model: semanticModel,
+      });
+      setSemanticResults(data);
+    } catch (err: unknown) {
+      setError(String(err));
+    } finally {
+      setSemanticSearching(false);
+    }
+  }, [query, semanticBaseUrl, semanticModel]);
 
   // Keyboard navigation within results
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIdx((prev) => Math.min(prev + 1, results.length - 1));
+        const max = searchMode === "semantic" ? semanticResults.length - 1 : results.length - 1;
+        setSelectedIdx((prev) => Math.min(prev + 1, max));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIdx((prev) => Math.max(prev - 1, 0));
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (results[selectedIdx]) {
+        if (searchMode === "semantic") {
+          // Trigger semantic search on Enter
+          handleSemanticSearch();
+        } else if (results[selectedIdx]) {
           onSelect(results[selectedIdx]);
           setOpen(false);
         }
@@ -156,7 +194,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
         setOpen(false);
       }
     },
-    [results, selectedIdx, onSelect],
+    [results, semanticResults, selectedIdx, onSelect, searchMode, handleSemanticSearch],
   );
 
   // Click outside to close
@@ -211,23 +249,38 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={regexMode ? "Search with regex..." : "Search notes..."}
+            placeholder={
+              searchMode === "regex" ? "Search with regex..." :
+              searchMode === "semantic" ? "Semantic search (natural language)..." :
+              "Search notes..."
+            }
             className="flex-1 bg-transparent border-none outline-none text-base"
             style={{ color: "var(--text-primary)" }}
           />
-          <button
-            type="button"
-            onClick={() => setRegexMode((prev) => !prev)}
-            className="text-xs px-1.5 py-0.5 rounded font-mono font-bold cursor-pointer transition-colors"
-            style={{
-              backgroundColor: regexMode ? "var(--accent-color, #6366f1)" : "var(--bg-hover)",
-              color: regexMode ? "#fff" : "var(--text-muted)",
-              border: "1px solid " + (regexMode ? "var(--accent-color, #6366f1)" : "var(--border-color)"),
-            }}
-            title="Toggle regex search"
-          >
-            .*
-          </button>
+          <div className="flex gap-1 items-center">
+            {(["fts", "regex", "semantic"] as SearchMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setSearchMode(mode);
+                  setResults([]);
+                  setSemanticResults([]);
+                  setError(null);
+                  setRegexError(null);
+                }}
+                className="text-xs px-1.5 py-0.5 rounded font-mono font-bold cursor-pointer transition-colors"
+                style={{
+                  backgroundColor: searchMode === mode ? "var(--accent-color, #6366f1)" : "var(--bg-hover)",
+                  color: searchMode === mode ? "#fff" : "var(--text-muted)",
+                  border: "1px solid " + (searchMode === mode ? "var(--accent-color, #6366f1)" : "var(--border-color)"),
+                }}
+                title={mode === "fts" ? "Full-text search" : mode === "regex" ? "Regex search" : "AI semantic search"}
+              >
+                {mode === "fts" ? "FTS" : mode === "regex" ? ".*" : "AI"}
+              </button>
+            ))}
+          </div>
           <kbd
             className="text-xs px-1.5 py-0.5 rounded"
             style={{
@@ -240,89 +293,201 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
           </kbd>
         </div>
 
-        {/* Results */}
-        <div className="max-h-72 overflow-y-auto">
-          {loading && (
+        {/* Semantic config when in semantic mode */}
+          {searchMode === "semantic" && (
             <div
-              className="px-4 py-3 text-sm"
-              style={{ color: "var(--text-muted)" }}
+              className="flex items-center gap-2 px-4 py-2 border-b text-xs"
+              style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-secondary)" }}
             >
-              Searching...
+              <input
+                type="text"
+                value={semanticBaseUrl}
+                onChange={(e) => setSemanticBaseUrl(e.target.value)}
+                placeholder="Ollama URL"
+                className="w-40 px-1.5 py-1 rounded border"
+                style={{
+                  backgroundColor: "var(--bg-primary)",
+                  borderColor: "var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <input
+                type="text"
+                value={semanticModel}
+                onChange={(e) => setSemanticModel(e.target.value)}
+                placeholder="Embed model"
+                className="w-36 px-1.5 py-1 rounded border"
+                style={{
+                  backgroundColor: "var(--bg-primary)",
+                  borderColor: "var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+              />
+              <span style={{ color: "var(--text-muted)" }}>Press Enter to search</span>
             </div>
           )}
 
-          {error && (
-            <div
-              className="px-4 py-3 text-sm"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              {error}
-            </div>
-          )}
+          {/* Results */}
+          <div className="max-h-72 overflow-y-auto">
+            {searchMode !== "semantic" && loading && (
+              <div
+                className="px-4 py-3 text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Searching...
+              </div>
+            )}
 
-          {regexError && (
-            <div
-              className="px-4 py-2 text-xs"
-              style={{ color: "#ef4444", backgroundColor: "rgba(239, 68, 68, 0.08)" }}
-            >
-              {regexError}
-            </div>
-          )}
+            {searchMode === "semantic" && semanticSearching && (
+              <div
+                className="px-4 py-3 text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Searching semantically...
+              </div>
+            )}
 
-          {!loading && !error && !regexError && debouncedQuery.trim() && results.length === 0 && (
-            <div
-              className="px-4 py-3 text-sm"
-              style={{ color: "var(--text-muted)" }}
-            >
-              No results found.
-            </div>
-          )}
+            {error && (
+              <div
+                className="px-4 py-3 text-sm"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {error}
+              </div>
+            )}
 
-          {!loading && !error && !regexError && results.length > 0 && (
-            <ul className="py-1">
-              {results.map((note, idx) => (
-                <li key={note.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSelect(note);
-                      setOpen(false);
-                    }}
-                    onMouseEnter={() => setSelectedIdx(idx)}
-                    className="w-full text-left px-4 py-3 transition-colors"
-                    style={{
-                      backgroundColor:
-                        idx === selectedIdx ? "var(--bg-hover)" : "transparent",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    <div
-                      className="text-sm font-semibold truncate"
-                      dangerouslySetInnerHTML={{
-                        __html: highlightMatch(note.title, debouncedQuery),
+            {regexError && (
+              <div
+                className="px-4 py-2 text-xs"
+                style={{ color: "#ef4444", backgroundColor: "rgba(239, 68, 68, 0.08)" }}
+              >
+                {regexError}
+              </div>
+            )}
+
+            {/* Semantic results */}
+            {searchMode === "semantic" && !semanticSearching && !error && semanticResults.length > 0 && (
+              <ul className="py-1">
+                {semanticResults.map((item, idx) => (
+                  <li key={item.relative_path}>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await invoke("vault_read_note", {
+                            relativePath: item.relative_path,
+                          });
+                          onSelect({
+                            id: item.relative_path,
+                            title: item.title,
+                            relative_path: item.relative_path,
+                            tags: [],
+                            created_at: "",
+                            updated_at: "",
+                          });
+                        } catch {
+                          // ignore
+                        }
+                        setOpen(false);
                       }}
-                    />
-                    <div
-                      className="text-xs mt-0.5 truncate"
-                      style={{ color: "var(--text-muted)" }}
+                      onMouseEnter={() => setSelectedIdx(idx)}
+                      className="w-full text-left px-4 py-3 transition-colors"
+                      style={{
+                        backgroundColor:
+                          idx === selectedIdx ? "var(--bg-hover)" : "transparent",
+                        color: "var(--text-primary)",
+                      }}
                     >
-                      {note.relative_path}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                      <div className="flex items-center justify-between">
+                        <div
+                          className="text-sm font-semibold truncate flex-1"
+                          dangerouslySetInnerHTML={{
+                            __html: highlightMatch(item.title || item.relative_path, query),
+                          }}
+                        />
+                        <span
+                          className="text-xs ml-2 font-mono shrink-0 px-1.5 py-0.5 rounded"
+                          style={{
+                            backgroundColor: "var(--bg-hover)",
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          {(item.similarity * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div
+                        className="text-xs mt-0.5 truncate"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {item.relative_path}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
 
-          {!loading && !error && !debouncedQuery.trim() && (
-            <div
-              className="px-4 py-3 text-sm"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Type to search your notes...
-            </div>
-          )}
-        </div>
+            {/* FTS/Regex results */}
+            {searchMode !== "semantic" && !loading && !error && !regexError && debouncedQuery.trim() && results.length === 0 && (
+              <div
+                className="px-4 py-3 text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                No results found.
+              </div>
+            )}
+
+            {searchMode !== "semantic" && !loading && !error && !regexError && results.length > 0 && (
+              <ul className="py-1">
+                {results.map((note, idx) => (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelect(note);
+                        setOpen(false);
+                      }}
+                      onMouseEnter={() => setSelectedIdx(idx)}
+                      className="w-full text-left px-4 py-3 transition-colors"
+                      style={{
+                        backgroundColor:
+                          idx === selectedIdx ? "var(--bg-hover)" : "transparent",
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      <div
+                        className="text-sm font-semibold truncate"
+                        dangerouslySetInnerHTML={{
+                          __html: highlightMatch(note.title, debouncedQuery),
+                        }}
+                      />
+                      <div
+                        className="text-xs mt-0.5 truncate"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {note.relative_path}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {!loading && !semanticSearching && !error && (
+              searchMode === "semantic"
+                ? semanticResults.length === 0
+                : !debouncedQuery.trim()
+            ) && (
+              <div
+                className="px-4 py-3 text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {searchMode === "semantic"
+                  ? "Type a natural language query and press Enter."
+                  : "Type to search your notes..."}
+              </div>
+            )}
+          </div>
       </div>
     </div>
   );
