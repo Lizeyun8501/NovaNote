@@ -1,0 +1,14 @@
+[package]
+name = "novanote-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+notify = { version = "7", features = [] }
+chrono = { version = "0.4", features = ["serde"] }
+walkdir = "2"
+thiserror = "2"
