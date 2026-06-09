@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult};
+use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge};
 
 pub struct Vault {
     pub root_path: PathBuf,
@@ -520,6 +520,110 @@ a {{ color: #6366f1; }}
         Ok(result)
     }
 
+    pub fn read_note(&self, path: &str) -> Result<String, VaultError> {
+        let full_path = self.root_path.join(path);
+        fs::read_to_string(&full_path).map_err(VaultError::Io)
+    }
+
+    pub fn write_note(&self, path: &str, content: &str) -> Result<(), VaultError> {
+        let full_path = self.root_path.join(path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&full_path, content)?;
+        self.index_file(&full_path)?;
+        Ok(())
+    }
+
+    pub fn delete_note(&self, path: &str) -> Result<(), VaultError> {
+        let full_path = self.root_path.join(path);
+        if full_path.exists() {
+            fs::remove_file(&full_path)?;
+        }
+        self.remove_file(path)
+    }
+
+    pub fn rename_note(&self, old_path: &str, new_path: &str) -> Result<(), VaultError> {
+        let old_full = self.root_path.join(old_path);
+        let new_full = self.root_path.join(new_path);
+        if !old_full.exists() {
+            return Err(VaultError::Other(format!("Note not found: {}", old_path)));
+        }
+        if let Some(parent) = new_full.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&old_full, &new_full)?;
+        self.remove_file(old_path)?;
+        self.index_file(&new_full)?;
+        Ok(())
+    }
+
+    pub fn get_graph_data(&self) -> Result<GraphData, VaultError> {
+        let notes = self.list_notes()?;
+        let links = self.get_all_links()?;
+        let nodes: Vec<GraphNode> = notes.into_iter().map(|n| GraphNode {
+            id: n.id,
+            title: n.title,
+            path: n.relative_path,
+        }).collect();
+        let edges: Vec<GraphEdge> = links.into_iter().map(|(source, target)| GraphEdge {
+            source,
+            target,
+        }).collect();
+        Ok(GraphData { nodes, edges })
+    }
+
+    /// Execute a read-only SQL query against the vault database.
+    /// Returns results as JSON arrays for flexibility.
+    /// Only SELECT statements are allowed for safety.
+    pub fn query_sql(&self, sql: &str) -> Result<Vec<serde_json::Value>, VaultError> {
+        // Safety check: only allow SELECT statements
+        let trimmed = sql.trim().to_uppercase();
+        if !trimmed.starts_with("SELECT") {
+            return Err(VaultError::Other("Only SELECT queries are allowed".to_string()));
+        }
+        // Block dangerous keywords
+        let dangerous = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "ATTACH", "PRAGMA"];
+        for keyword in &dangerous {
+            if trimmed.contains(keyword) {
+                return Err(VaultError::Other(format!("Keyword '{}' is not allowed in queries", keyword)));
+            }
+        }
+
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut stmt = conn.prepare(sql)?;
+        
+        let column_count = stmt.column_count();
+        let column_names: Vec<String> = (0..column_count)
+            .map(|i| stmt.column_name(i).map(|s| s.to_string()).map_err(VaultError::Sqlite))
+            .collect::<Result<Vec<String>, VaultError>>()?;
+
+        let rows = stmt.query_map([], |row| {
+            let mut map: serde_json::Map<String, serde_json::Value> = serde_json::Map::with_capacity(column_count);
+            for (i, name) in column_names.iter().enumerate() {
+                let value: serde_json::Value = match row.get_ref(i) {
+                    Ok(rusqlite::types::ValueRef::Null) => serde_json::Value::Null,
+                    Ok(rusqlite::types::ValueRef::Integer(n)) => serde_json::json!(n),
+                    Ok(rusqlite::types::ValueRef::Real(f)) => serde_json::json!(f),
+                    Ok(rusqlite::types::ValueRef::Text(s)) => {
+                        let text = String::from_utf8_lossy(s).to_string();
+                        serde_json::json!(text)
+                    }
+                    Ok(rusqlite::types::ValueRef::Blob(_)) => serde_json::json!("[blob]"),
+                    Err(_) => serde_json::Value::Null,
+                };
+                map.insert(name.clone(), value);
+            }
+            Ok(serde_json::Value::Object(map))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
     pub fn is_vault(path: &Path) -> bool {
         path.join(".vault").join("config.json").exists()
     }
@@ -607,6 +711,48 @@ fn clean_notion_markdown(content: &str) -> String {
 fn sanitize_filename(name: &str) -> String {
     name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
         .collect::<String>().trim().to_string()
+}
+
+impl NoteStore for Vault {
+    fn get_note_content(&self, path: &str) -> Result<String, VaultError> {
+        self.read_note(path)
+    }
+
+    fn save_note(&self, path: &str, content: &str) -> Result<(), VaultError> {
+        self.write_note(path, content)
+    }
+
+    fn delete_note(&self, path: &str) -> Result<(), VaultError> {
+        self.delete_note(path)
+    }
+
+    fn rename_note(&self, old_path: &str, new_path: &str) -> Result<(), VaultError> {
+        self.rename_note(old_path, new_path)
+    }
+
+    fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError> {
+        self.list_notes()
+    }
+
+    fn search(&self, query: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        self.search(query)
+    }
+
+    fn get_backlinks(&self, path: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        self.get_backlinks(path)
+    }
+
+    fn list_tags(&self) -> Result<Vec<String>, VaultError> {
+        self.list_tags().map(|tags| tags.into_iter().map(|(name, _count)| name).collect())
+    }
+
+    fn get_notes_by_tag(&self, tag: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        self.get_notes_by_tag(tag)
+    }
+
+    fn get_graph_data(&self) -> Result<GraphData, VaultError> {
+        self.get_graph_data()
+    }
 }
 
 #[cfg(test)]

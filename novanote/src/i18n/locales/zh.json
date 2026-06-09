@@ -1,0 +1,102 @@
+{
+  "app": {
+    "title": "NovaNote",
+    "newNote": "新建笔记",
+    "newCanvas": "新建画布",
+    "openVault": "打开知识库",
+    "import": "导入"
+  },
+  "sidebar": {
+    "files": "文件",
+    "tags": "标签",
+    "dailyNote": "日记",
+    "templates": "模板",
+    "sync": "同步",
+    "ai": "AI 助手",
+    "calendar": "日历",
+    "plugins": "插件"
+  },
+  "editor": {
+    "placeholder": "开始写笔记...",
+    "bold": "粗体",
+    "italic": "斜体",
+    "heading": "标题",
+    "list": "列表",
+    "code": "代码块",
+    "quote": "引用",
+    "link": "链接"
+  },
+  "search": {
+    "placeholder": "搜索笔记...",
+    "regexPlaceholder": "正则表达式搜索...",
+    "semanticPlaceholder": "语义搜索（自然语言）...",
+    "noResults": "未找到结果。",
+    "typeToSearch": "输入关键词搜索笔记...",
+    "semanticHint": "输入自然语言查询，按 Enter 搜索。"
+  },
+  "ai": {
+    "title": "AI 助手",
+    "tags": "智能标签",
+    "summary": "自动摘要",
+    "writing": "写作辅助",
+    "generateTags": "生成标签",
+    "generateSummary": "生成摘要",
+    "polish": "润色",
+    "continue": "续写",
+    "toChinese": "→ 中文",
+    "toEnglish": "→ 英文",
+    "run": "执行",
+    "test": "测试",
+    "ollamaUrl": "Ollama 地址",
+    "model": "模型"
+  },
+  "calendar": {
+    "today": "今天",
+    "hasNotes": "有笔记",
+    "clickDate": "点击日期打开日记"
+  },
+  "plugin": {
+    "title": "插件市场",
+    "discover": "发现",
+    "installed": "已安装",
+    "install": "安装",
+    "uninstall": "卸载",
+    "enable": "启用",
+    "disable": "禁用",
+    "searchPlaceholder": "搜索插件...",
+    "noPlugins": "尚未安装插件，去市场发现更多插件。"
+  },
+  "import": {
+    "title": "导入笔记",
+    "obsidian": "Obsidian",
+    "notion": "Notion",
+    "joplin": "Joplin",
+    "email": "邮件 (.eml)",
+    "importing": "导入中...",
+    "success": "导入完成！",
+    "selectSource": "选择导入来源"
+  },
+  "export": {
+    "title": "导出",
+    "html": "导出为 HTML",
+    "markdown": "导出为 Markdown",
+    "pdf": "导出为 PDF"
+  },
+  "sync": {
+    "title": "同步设置",
+    "setupPassword": "设置加密密码",
+    "enable": "启用同步",
+    "disable": "禁用同步",
+    "status": "同步状态",
+    "connected": "已连接",
+    "disconnected": "未连接"
+  },
+  "sql": {
+    "title": "SQL 查询",
+    "placeholder": "SELECT * FROM notes WHERE ...",
+    "run": "执行查询",
+    "onlySelect": "仅允许 SELECT 查询",
+    "results": "结果",
+    "noResults": "无结果"
+  }
+}

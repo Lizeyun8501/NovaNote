@@ -515,6 +515,13 @@ fn ai_embedding_status(state: State<AppState>) -> Result<(bool, i64), String> {
 }
 
 #[tauri::command]
+fn vault_query_sql(state: State<AppState>, sql: String) -> Result<Vec<serde_json::Value>, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.query_sql(&sql).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn plugin_list(state: State<AppState>) -> Result<Vec<PluginInfo>, String> {
     let host = state.plugin_host.lock().map_err(|e| e.to_string())?;
     Ok(host.list_plugins())
@@ -616,6 +623,7 @@ pub fn run() {
             ai_index_embedding,
             ai_index_all_embeddings,
             ai_embedding_status,
+            vault_query_sql,
             plugin_list,
             plugin_install,
             plugin_uninstall,

@@ -4,6 +4,7 @@ mod server;
 mod auth;
 mod storage;
 mod ws;
+mod api;
 
 #[tokio::main]
 async fn main() {

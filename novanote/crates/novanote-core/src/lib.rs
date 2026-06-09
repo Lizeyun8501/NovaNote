@@ -1,6 +1,9 @@
-// Always available (WASM-compatible)
+// Always available (WASM-Compatible)
 pub mod crypto;
 pub use crypto::*;
+
+pub mod meta_crypto;
+pub use meta_crypto::MetaCrypto;
 
 pub mod crdt;
 pub use crdt::YDocHolder;
@@ -42,8 +45,173 @@ pub struct NoteMeta {
     pub updated_at: String,
 }
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+// === Core Trait Abstractions ===
+// These traits define the interfaces for swappable backends.
+
+/// Trait for note storage operations. Implementations can use SQLite, RocksDB, etc.
+pub trait NoteStore: Send + Sync {
+    /// Get a note's content by its relative path
+    fn get_note_content(&self, path: &str) -> Result<String, VaultError>;
+    /// Save note content, creating or updating as needed
+    fn save_note(&self, path: &str, content: &str) -> Result<(), VaultError>;
+    /// Delete a note
+    fn delete_note(&self, path: &str) -> Result<(), VaultError>;
+    /// Rename/move a note
+    fn rename_note(&self, old_path: &str, new_path: &str) -> Result<(), VaultError>;
+    /// List all notes with metadata
+    fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError>;
+    /// Search notes by query string
+    fn search(&self, query: &str) -> Result<Vec<NoteMeta>, VaultError>;
+    /// Get backlinks for a note
+    fn get_backlinks(&self, path: &str) -> Result<Vec<NoteMeta>, VaultError>;
+    /// Get all tags
+    fn list_tags(&self) -> Result<Vec<String>, VaultError>;
+    /// Get notes by tag
+    fn get_notes_by_tag(&self, tag: &str) -> Result<Vec<NoteMeta>, VaultError>;
+    /// Get graph data (nodes and edges)
+    fn get_graph_data(&self) -> Result<GraphData, VaultError>;
+}
+
+/// Trait for sync backend operations. Implementations can use WebSocket, WebDAV, S3, etc.
+pub trait SyncBackend: Send + Sync {
+    /// Push an encrypted update to the server
+    fn push_update(&self, doc_id: &str, encrypted_blob: &[u8], nonce: &[u8]) -> Result<(), VaultError>;
+    /// Pull missing updates from the server
+    fn pull_updates(&self, doc_id: &str, since_version: u64) -> Result<Vec<EncryptedUpdate>, VaultError>;
+    /// Get the current sync status
+    fn get_status(&self) -> Result<SyncStatusInfo, VaultError>;
+    /// Test connection to the backend
+    fn test_connection(&self) -> Result<bool, VaultError>;
+}
+
+/// Trait for file storage operations. Implementations can use local FS, S3, etc.
+pub trait StorageBackend: Send + Sync {
+    /// Read file content
+    fn read_file(&self, path: &str) -> Result<Vec<u8>, VaultError>;
+    /// Write file content
+    fn write_file(&self, path: &str, content: &[u8]) -> Result<(), VaultError>;
+    /// Delete a file
+    fn delete_file(&self, path: &str) -> Result<(), VaultError>;
+    /// Check if file exists
+    fn exists(&self, path: &str) -> Result<bool, VaultError>;
+    /// List files in a directory
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, VaultError>;
+}
+
+/// Graph data for knowledge graph visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphData {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub title: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub source: String,
+    pub target: String,
+}
+
+/// Encrypted update from sync server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedUpdate {
+    pub doc_id: String,
+    pub encrypted_blob: String,  // base64
+    pub nonce: String,           // base64
+    pub version: u64,
+    pub timestamp: i64,
+}
+
+/// Sync status information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusInfo {
+    pub connected: bool,
+    pub last_sync: i64,
+    pub pending_count: usize,
+    pub backend_type: String,
+}
+
+// === Block Model ===
+// Block-based document model inspired by Notion/Notion-style editors.
+// TipTap (ProseMirror) already uses a block model on the frontend;
+// these types align the Rust backend with the editor's document structure.
+
+/// Block types matching ProseMirror/TipTap node types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum BlockType {
+    Paragraph,
+    Heading,
+    BulletList,
+    OrderedList,
+    ListItem,
+    CodeBlock,
+    Blockquote,
+    HorizontalRule,
+    Image,
+    Table,
+    TableRow,
+    TableCell,
+    TaskList,
+    TaskItem,
+    MathBlock,
+    Callout,
+    Embed,
+    Custom(String),
+}
+
+/// A block in the document tree
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub id: String,
+    pub block_type: BlockType,
+    pub content: String,
+    pub props: serde_json::Value,
+    pub children: Vec<Block>,
+    pub refs: Vec<BlockRef>,
+}
+
+/// A reference from one block to another note/block
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockRef {
+    pub target_note_path: String,
+    pub target_block_id: Option<String>,
+    pub display_text: String,
+}
+
+/// Full note structure with blocks (extends NoteMeta for richer data)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub meta: NoteMeta,
+    pub blocks: Vec<Block>,
+    pub links: Vec<LinkIndex>,
+    pub attachments: Vec<String>,
+}
+
+/// Bidirectional link index entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkIndex {
+    pub source_path: String,
+    pub source_block_id: Option<String>,
+    pub target_path: String,
+    pub target_block_id: Option<String>,
+    pub link_text: String,
+}
+
+/// Sync log entry for audit trail
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncLog {
+    pub operation_id: String,
+    pub note_id: String,
+    pub operation: String,  // "create" | "update" | "delete"
+    pub version: u64,
+    pub timestamp: i64,
 }
 
 // AI integration (native - uses reqwest for HTTP)
@@ -69,6 +237,11 @@ pub use vector_search::{generate_embedding, cosine_similarity, serialize_embeddi
 pub mod sync;
 #[cfg(feature = "native")]
 pub use sync::{SyncEngine, SyncConfig, SyncStatus, PendingUpdate};
+
+#[cfg(feature = "native")]
+pub mod sync_webdav;
+#[cfg(feature = "native")]
+pub use sync_webdav::{WebDAVConfig, WebDAVBackend};
 
 // Native-only vault implementation
 #[cfg(feature = "native")]

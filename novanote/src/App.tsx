@@ -15,6 +15,7 @@ import { SyncSettings } from "./components/sync/SyncSettings";
 import AIPanel from "./components/ai/AIPanel";
 import CalendarView from "./components/calendar/CalendarView";
 import PluginMarket from "./components/plugin/PluginMarket";
+import SqlQueryPanel from "./components/sql/SqlQueryPanel";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
@@ -57,6 +58,7 @@ function App() {
   const [showAIPanel, setShowAIPanel] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showPluginMarket, setShowPluginMarket] = useState(false);
+  const [showSqlQuery, setShowSqlQuery] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState<string>("");
   const isMobile = useMediaQuery("(max-width: 768px)");
 
@@ -585,6 +587,13 @@ function App() {
         category: "Plugins",
         execute: () => setShowPluginMarket(true),
       },
+      {
+        id: "sql-query",
+        label: "SQL Query",
+        shortcut: undefined,
+        category: "Developer",
+        execute: () => setShowSqlQuery(true),
+      },
     ],
     [handleNewNote, handleNewCanvas, handleOpenDailyNote],
   );
@@ -783,6 +792,12 @@ function App() {
         <PluginMarket
           isOpen={showPluginMarket}
           onClose={() => setShowPluginMarket(false)}
+        />
+      )}
+
+      {showSqlQuery && (
+        <SqlQueryPanel
+          onClose={() => setShowSqlQuery(false)}
         />
       )}
     </>

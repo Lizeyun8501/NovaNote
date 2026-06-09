@@ -1,0 +1,102 @@
+{
+  "app": {
+    "title": "NovaNote",
+    "newNote": "New Note",
+    "newCanvas": "New Canvas",
+    "openVault": "Open Vault",
+    "import": "Import"
+  },
+  "sidebar": {
+    "files": "Files",
+    "tags": "Tags",
+    "dailyNote": "Daily Note",
+    "templates": "Templates",
+    "sync": "Sync",
+    "ai": "AI Assistant",
+    "calendar": "Calendar",
+    "plugins": "Plugins"
+  },
+  "editor": {
+    "placeholder": "Start writing your note...",
+    "bold": "Bold",
+    "italic": "Italic",
+    "heading": "Heading",
+    "list": "List",
+    "code": "Code Block",
+    "quote": "Blockquote",
+    "link": "Link"
+  },
+  "search": {
+    "placeholder": "Search notes...",
+    "regexPlaceholder": "Search with regex...",
+    "semanticPlaceholder": "Semantic search (natural language)...",
+    "noResults": "No results found.",
+    "typeToSearch": "Type to search your notes...",
+    "semanticHint": "Type a natural language query and press Enter."
+  },
+  "ai": {
+    "title": "AI Assistant",
+    "tags": "Smart Tags",
+    "summary": "Summarize",
+    "writing": "Writing Assist",
+    "generateTags": "Generate Tags",
+    "generateSummary": "Generate Summary",
+    "polish": "Polish",
+    "continue": "Continue",
+    "toChinese": "→ Chinese",
+    "toEnglish": "→ English",
+    "run": "Run",
+    "test": "Test",
+    "ollamaUrl": "Ollama URL",
+    "model": "Model"
+  },
+  "calendar": {
+    "today": "Today",
+    "hasNotes": "Has notes",
+    "clickDate": "Click date to open daily note"
+  },
+  "plugin": {
+    "title": "Plugin Marketplace",
+    "discover": "Discover",
+    "installed": "Installed",
+    "install": "Install",
+    "uninstall": "Remove",
+    "enable": "Enable",
+    "disable": "Disable",
+    "searchPlaceholder": "Search plugins...",
+    "noPlugins": "No plugins installed. Browse the marketplace to discover plugins."
+  },
+  "import": {
+    "title": "Import Notes",
+    "obsidian": "Obsidian",
+    "notion": "Notion",
+    "joplin": "Joplin",
+    "email": "Email (.eml)",
+    "importing": "Importing...",
+    "success": "Import complete!",
+    "selectSource": "Select a source to import from"
+  },
+  "export": {
+    "title": "Export",
+    "html": "Export as HTML",
+    "markdown": "Export as Markdown",
+    "pdf": "Export as PDF"
+  },
+  "sync": {
+    "title": "Sync Settings",
+    "setupPassword": "Setup Encryption Password",
+    "enable": "Enable Sync",
+    "disable": "Disable Sync",
+    "status": "Sync Status",
+    "connected": "Connected",
+    "disconnected": "Disconnected"
+  },
+  "sql": {
+    "title": "SQL Query",
+    "placeholder": "SELECT * FROM notes WHERE ...",
+    "run": "Run Query",
+    "onlySelect": "Only SELECT queries are allowed",
+    "results": "Results",
+    "noResults": "No results"
+  }
+}

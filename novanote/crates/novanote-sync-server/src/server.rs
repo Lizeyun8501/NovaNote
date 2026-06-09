@@ -1,4 +1,4 @@
-use axum::{Router, routing::get, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade};
+use axum::{Router, routing::{get, post}, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -67,6 +67,14 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws/{doc_id}", get(ws_handler))
+        // REST API v1
+        .route("/api/v1/health", get(crate::api::api_health))
+        .route("/api/v1/docs", get(crate::api::api_list_docs))
+        .route("/api/v1/docs/{doc_id}", get(crate::api::api_get_doc))
+        .route("/api/v1/docs/{doc_id}/push", post(crate::api::api_push))
+        .route("/api/v1/docs/{doc_id}/pull", get(crate::api::api_pull))
+        .route("/api/v1/stats", get(crate::api::api_stats))
+        .route("/api/v1/clip", post(crate::api::api_clip))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await
