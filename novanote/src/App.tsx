@@ -16,6 +16,7 @@ import AIPanel from "./components/ai/AIPanel";
 import CalendarView from "./components/calendar/CalendarView";
 import PluginMarket from "./components/plugin/PluginMarket";
 import SqlQueryPanel from "./components/sql/SqlQueryPanel";
+import MindMapView from "./components/mindmap/MindMapView";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
@@ -43,7 +44,7 @@ function App() {
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [, setNoteContent] = useState<string>("");
+  const [noteContent, setNoteContent] = useState<string>("");
   const [htmlContent, setHtmlContent] = useState<string>("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [showGraph, setShowGraph] = useState(false);
@@ -59,6 +60,7 @@ function App() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [showPluginMarket, setShowPluginMarket] = useState(false);
   const [showSqlQuery, setShowSqlQuery] = useState(false);
+  const [showMindMap, setShowMindMap] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState<string>("");
   const isMobile = useMediaQuery("(max-width: 768px)");
 
@@ -594,6 +596,13 @@ function App() {
         category: "Developer",
         execute: () => setShowSqlQuery(true),
       },
+      {
+        id: "mind-map",
+        label: "Mind Map View",
+        shortcut: undefined,
+        category: "View",
+        execute: () => setShowMindMap(true),
+      },
     ],
     [handleNewNote, handleNewCanvas, handleOpenDailyNote],
   );
@@ -798,6 +807,13 @@ function App() {
       {showSqlQuery && (
         <SqlQueryPanel
           onClose={() => setShowSqlQuery(false)}
+        />
+      )}
+
+      {showMindMap && (
+        <MindMapView
+          content={noteContent}
+          onClose={() => setShowMindMap(false)}
         />
       )}
     </>

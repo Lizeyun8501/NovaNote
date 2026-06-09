@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { NoteMeta } from "../../types";
 
-type ImportSource = "obsidian" | "notion" | "joplin" | "email";
+type ImportSource = "obsidian" | "notion" | "joplin" | "email" | "siyuan";
 
 interface ImportWizardProps {
   isOpen: boolean;
@@ -41,6 +41,13 @@ const SOURCE_INFO: Record<ImportSource, { label: string; description: string; ic
     selectLabel: "Select .eml Email File",
     isDirectory: false,
     filter: { name: "Email File", extensions: ["eml"] },
+  },
+  siyuan: {
+    label: "SiYuan (思源笔记)",
+    description: "Import from a SiYuan Notes export directory (.sy files)",
+    icon: "📝",
+    selectLabel: "Select SiYuan Export Directory",
+    isDirectory: true,
   },
 };
 
@@ -92,6 +99,7 @@ export default function ImportWizard({ isOpen, onClose, onImportComplete }: Impo
           obsidian: "vault_import_obsidian",
           notion: "vault_import_notion",
           joplin: "vault_import_joplin",
+          siyuan: "vault_import_obsidian",  // SiYuan exports as .md files, same as Obsidian import
         };
 
         const importedNotes: NoteMeta[] = await invoke(commandMap[selectedSource], {

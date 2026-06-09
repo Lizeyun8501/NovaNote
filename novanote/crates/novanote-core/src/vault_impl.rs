@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge};
+use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore};
 
 pub struct Vault {
     pub root_path: PathBuf,
@@ -13,6 +13,7 @@ pub struct Vault {
     conn: Mutex<Connection>,
     ydoc_holder: YDocHolder,
     pub sync_engine: SyncEngine,
+    crdt_store: CrdtStore,
 }
 
 impl Vault {
@@ -35,6 +36,8 @@ impl Vault {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Untitled".to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),
+            encryption_key_encrypted: None,
+            settings: Default::default(),
         };
 
         let config_json = serde_json::to_string_pretty(&config)?;
@@ -45,12 +48,16 @@ impl Vault {
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         Self::init_db(&conn)?;
 
+        let crdt_path = vault_dir.join("crdt.db");
+        let crdt_store = CrdtStore::open(&crdt_path)?;
+
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
             conn: Mutex::new(conn),
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
+            crdt_store,
         })
     }
 
@@ -65,12 +72,17 @@ impl Vault {
         let conn = Connection::open(&db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         Self::init_db(&conn)?;
+
+        let crdt_path = root.join(".vault").join("crdt.db");
+        let crdt_store = CrdtStore::open(&crdt_path)?;
+
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
             conn: Mutex::new(conn),
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
+            crdt_store,
         })
     }
 

@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["native"]
-native = []
+native = ["dep:rocksdb"]
 wasm = []
 
 [dependencies]
@@ -25,6 +25,8 @@ base64 = "0.22"
 
 # Native dependencies (used by vault_impl, sync modules)
 rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+rocksdb = { version = "0.22", optional = true }
+prost = "0.13"
 notify = { version = "7", features = [] }
 walkdir = "2"
 tar = "0.4"
@@ -32,3 +34,5 @@ pulldown-cmark = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
 mailparse = "0.15"
 tokio = { version = "1", features = ["sync", "time"] }
+hmac = "0.12"
+sha2 = "0.10"

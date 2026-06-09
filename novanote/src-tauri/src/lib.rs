@@ -2,6 +2,7 @@ use novanote_core::{NoteMeta, Vault};
 use novanote_core::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult};
 use novanote_core::{parse_eml_file, email_to_markdown};
 use novanote_core::VectorSearchResult;
+use novanote_core::GitIntegration;
 use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
@@ -572,6 +573,38 @@ fn plugin_disable(state: State<AppState>, plugin_id: String) -> Result<(), Strin
     host.unload_plugin(&plugin_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn git_init(state: State<AppState>) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let git = GitIntegration::new(&vault.root_path);
+    git.init().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn git_commit(state: State<AppState>, message: String) -> Result<String, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let git = GitIntegration::new(&vault.root_path);
+    git.commit_all(&message).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn git_log(state: State<AppState>, max_count: Option<usize>) -> Result<Vec<novanote_core::CommitEntry>, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let git = GitIntegration::new(&vault.root_path);
+    git.log(max_count.unwrap_or(50)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn git_diff(state: State<AppState>, path: String) -> Result<String, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let git = GitIntegration::new(&vault.root_path);
+    git.diff(&path).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Determine plugins directory
@@ -628,7 +661,11 @@ pub fn run() {
             plugin_install,
             plugin_uninstall,
             plugin_enable,
-            plugin_disable
+            plugin_disable,
+            git_init,
+            git_commit,
+            git_log,
+            git_diff
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

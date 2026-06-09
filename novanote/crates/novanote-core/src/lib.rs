@@ -8,6 +8,11 @@ pub use meta_crypto::MetaCrypto;
 pub mod crdt;
 pub use crdt::YDocHolder;
 
+#[cfg(feature = "native")]
+pub mod crdt_store;
+#[cfg(feature = "native")]
+pub use crdt_store::CrdtStore;
+
 // Shared types available on all platforms
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,6 +38,48 @@ pub struct VaultConfig {
     pub id: String,
     pub name: String,
     pub created_at: String,
+    #[serde(default)]
+    pub encryption_key_encrypted: Option<String>,  // Encrypted master key (base64), stored encrypted with user password
+    #[serde(default)]
+    pub settings: VaultSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultSettings {
+    #[serde(default = "default_true")]
+    pub auto_save: bool,
+    #[serde(default = "default_auto_save_interval")]
+    pub auto_save_interval_ms: u64,
+    #[serde(default)]
+    pub sync_enabled: bool,
+    #[serde(default)]
+    pub e2ee_enabled: bool,
+    #[serde(default = "default_true")]
+    pub file_watcher_enabled: bool,
+    #[serde(default)]
+    pub default_note_folder: String,
+    #[serde(default)]
+    pub daily_note_folder: String,
+    #[serde(default)]
+    pub attachment_folder: String,
+}
+
+fn default_true() -> bool { true }
+fn default_auto_save_interval() -> u64 { 500 }
+
+impl Default for VaultSettings {
+    fn default() -> Self {
+        Self {
+            auto_save: true,
+            auto_save_interval_ms: 500,
+            sync_enabled: false,
+            e2ee_enabled: false,
+            file_watcher_enabled: true,
+            default_note_folder: String::new(),
+            daily_note_folder: "daily".to_string(),
+            attachment_folder: "attachments".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,8 +290,32 @@ pub mod sync_webdav;
 #[cfg(feature = "native")]
 pub use sync_webdav::{WebDAVConfig, WebDAVBackend};
 
+#[cfg(feature = "native")]
+pub mod git_integration;
+#[cfg(feature = "native")]
+pub use git_integration::{GitIntegration, CommitEntry};
+
+#[cfg(feature = "native")]
+pub mod webhook;
+#[cfg(feature = "native")]
+pub use webhook::{WebhookConfig, WebhookPayload, WebhookDelivery, WebhookManager};
+
+#[cfg(feature = "native")]
+pub mod sync_s3;
+#[cfg(feature = "native")]
+pub use sync_s3::{S3Config, S3Backend};
+
 // Native-only vault implementation
 #[cfg(feature = "native")]
 mod vault_impl;
 #[cfg(feature = "native")]
 pub use vault_impl::Vault;
+
+#[cfg(feature = "native")]
+pub mod protobuf;
+#[cfg(feature = "native")]
+pub use protobuf::{
+    SyncMessage, AuthRequest, AuthResponse, SyncStep1, SyncStep2,
+    AwarenessUpdate, CursorState, DocEvent, DocEventType,
+    FrontendCommand, BackendResponse,
+};
