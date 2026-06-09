@@ -6,6 +6,8 @@ export type { NoteMeta };
 
 interface SearchBarProps {
   onSelect: (note: NoteMeta) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function highlightMatch(text: string, query: string): string {
@@ -37,13 +39,27 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced;
 }
 
-export default function SearchBar({ onSelect }: SearchBarProps) {
-  const [open, setOpen] = useState(false);
+export default function SearchBar({ onSelect, open: openProp, onOpenChange }: SearchBarProps) {
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = useCallback(
+    (value: boolean | ((prev: boolean) => boolean)) => {
+      if (onOpenChange) {
+        const resolved = typeof value === "function" ? value(open) : value;
+        onOpenChange(resolved);
+      } else {
+        setOpenInternal(value);
+      }
+    },
+    [onOpenChange, open],
+  );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<NoteMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const [regexMode, setRegexMode] = useState(false);
+  const [regexError, setRegexError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -71,6 +87,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
       setQuery("");
       setResults([]);
       setError(null);
+      setRegexError(null);
       setSelectedIdx(0);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
@@ -81,12 +98,19 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
     if (!debouncedQuery.trim()) {
       setResults([]);
       setError(null);
+      setRegexError(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    invoke<NoteMeta[]>("vault_search", { query: debouncedQuery })
+    setRegexError(null);
+
+    const invokeSearch = regexMode
+      ? invoke<NoteMeta[]>("vault_search_regex", { pattern: debouncedQuery })
+      : invoke<NoteMeta[]>("vault_search", { query: debouncedQuery });
+
+    invokeSearch
       .then((data) => {
         if (!cancelled) {
           setResults(data);
@@ -95,7 +119,12 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(String(err));
+          const errMsg = String(err);
+          if (regexMode && errMsg.includes("Invalid regex")) {
+            setRegexError(errMsg);
+          } else {
+            setError(errMsg);
+          }
           setResults([]);
         }
       })
@@ -105,7 +134,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, regexMode]);
 
   // Keyboard navigation within results
   const handleKeyDown = useCallback(
@@ -182,10 +211,23 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search notes..."
+            placeholder={regexMode ? "Search with regex..." : "Search notes..."}
             className="flex-1 bg-transparent border-none outline-none text-base"
             style={{ color: "var(--text-primary)" }}
           />
+          <button
+            type="button"
+            onClick={() => setRegexMode((prev) => !prev)}
+            className="text-xs px-1.5 py-0.5 rounded font-mono font-bold cursor-pointer transition-colors"
+            style={{
+              backgroundColor: regexMode ? "var(--accent-color, #6366f1)" : "var(--bg-hover)",
+              color: regexMode ? "#fff" : "var(--text-muted)",
+              border: "1px solid " + (regexMode ? "var(--accent-color, #6366f1)" : "var(--border-color)"),
+            }}
+            title="Toggle regex search"
+          >
+            .*
+          </button>
           <kbd
             className="text-xs px-1.5 py-0.5 rounded"
             style={{
@@ -218,7 +260,16 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
             </div>
           )}
 
-          {!loading && !error && debouncedQuery.trim() && results.length === 0 && (
+          {regexError && (
+            <div
+              className="px-4 py-2 text-xs"
+              style={{ color: "#ef4444", backgroundColor: "rgba(239, 68, 68, 0.08)" }}
+            >
+              {regexError}
+            </div>
+          )}
+
+          {!loading && !error && !regexError && debouncedQuery.trim() && results.length === 0 && (
             <div
               className="px-4 py-3 text-sm"
               style={{ color: "var(--text-muted)" }}
@@ -227,7 +278,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
             </div>
           )}
 
-          {!loading && !error && results.length > 0 && (
+          {!loading && !error && !regexError && results.length > 0 && (
             <ul className="py-1">
               {results.map((note, idx) => (
                 <li key={note.id}>

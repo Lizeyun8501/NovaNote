@@ -1,16 +1,25 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
+import { TagHighlight } from "./TagHighlightExtension";
 import { htmlToMarkdown } from "../../utils/markdown";
+import { Wikilink } from "./WikilinkExtension";
+import WikilinkSuggestion from "./WikilinkSuggestion";
 import "./Editor.css";
 
 interface EditorProps {
   content: string;
   onChange: (html: string, markdown: string) => void;
   placeholder?: string;
+  onLinkClick?: (target: string) => void;
 }
 
-export default function Editor({ content, onChange, placeholder }: EditorProps) {
+export default function Editor({
+  content,
+  onChange,
+  placeholder,
+  onLinkClick,
+}: EditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -19,6 +28,10 @@ export default function Editor({ content, onChange, placeholder }: EditorProps) 
       Placeholder.configure({
         placeholder: placeholder || "Start writing...",
       }),
+      Wikilink.configure({
+        onLinkClick: onLinkClick ?? null,
+      }),
+      TagHighlight,
     ],
     content,
     onUpdate: ({ editor }) => {
@@ -119,6 +132,7 @@ export default function Editor({ content, onChange, placeholder }: EditorProps) 
         ))}
       </div>
       <EditorContent editor={editor} className="editor-content" />
+      <WikilinkSuggestion editor={editor} />
     </div>
   );
 }

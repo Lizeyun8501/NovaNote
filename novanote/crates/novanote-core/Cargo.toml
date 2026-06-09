@@ -12,3 +12,6 @@ notify = { version = "7", features = [] }
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2"
 thiserror = "2"
+regex = "1"
+tar = "0.4"
+pulldown-cmark = "0.12"

@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use thiserror::Error;
@@ -149,6 +150,31 @@ impl Vault {
                 INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
                 INSERT INTO notes_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
             END;
+
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS note_tags (
+                note_id TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                PRIMARY KEY (note_id, tag_name),
+                FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_name);
+
+            CREATE TABLE IF NOT EXISTS links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_path TEXT NOT NULL,
+                target_path TEXT NOT NULL,
+                link_text TEXT NOT NULL,
+                target_heading TEXT DEFAULT '',
+                FOREIGN KEY (source_path) REFERENCES notes(relative_path) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_path);
+            CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_path);
             ",
         )?;
 
@@ -201,7 +227,13 @@ impl Vault {
 
         let content = fs::read_to_string(path)?;
 
-        let (title, tags) = Self::parse_frontmatter(&content);
+        let (title, mut tags) = Self::parse_frontmatter(&content);
+        let inline_tags = Self::extract_inline_tags(&content);
+        for tag in inline_tags {
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
 
         // Get file timestamps
         let metadata = fs::metadata(path)?;
@@ -231,8 +263,31 @@ impl Vault {
             params![id, title, relative_path, tags_json, content, created_at, modified],
         )?;
 
+        // Get the actual note id (may differ from generated id on conflict)
+        let actual_id: String = conn
+            .query_row(
+                "SELECT id FROM notes WHERE relative_path = ?1",
+                params![relative_path],
+                |row| row.get(0),
+            )
+            .unwrap_or(id.clone());
+
+        // Update links: delete old links for this source, then insert new ones
+        conn.execute(
+            "DELETE FROM links WHERE source_path = ?1",
+            params![relative_path],
+        )?;
+
+        let wikilinks = Self::extract_wikilinks(&content);
+        for (target_path, link_text, target_heading) in &wikilinks {
+            conn.execute(
+                "INSERT INTO links (source_path, target_path, link_text, target_heading) VALUES (?1, ?2, ?3, ?4)",
+                params![relative_path, target_path, link_text, target_heading],
+            )?;
+        }
+
         Ok(NoteMeta {
-            id,
+            id: actual_id,
             title,
             relative_path,
             tags,
@@ -327,6 +382,37 @@ impl Vault {
         Ok(results)
     }
 
+    /// Regex search across note titles and content
+    pub fn search_regex(&self, pattern: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| VaultError::Other(format!("Invalid regex: {}", e)))?;
+
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sql = "SELECT id, title, relative_path, tags, created_at, updated_at FROM notes";
+        let mut stmt = conn.prepare(sql).map_err(VaultError::Sqlite)?;
+
+        let notes = stmt.query_map([], |row| {
+            Ok(NoteMeta {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                relative_path: row.get(2)?,
+                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        }).map_err(VaultError::Sqlite)?
+        .filter_map(|r| r.ok())
+        .filter(|note| re.is_match(&note.title) || {
+            let content_sql = "SELECT content FROM notes WHERE id = ?1";
+            conn.query_row(content_sql, [&note.id], |row| row.get::<_, String>(0))
+                .map(|c| re.is_match(&c))
+                .unwrap_or(false)
+        })
+        .collect();
+
+        Ok(notes)
+    }
+
     /// Get all indexed notes
     pub fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError> {
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
@@ -355,6 +441,250 @@ impl Vault {
         }
 
         Ok(results)
+    }
+
+    /// Get backlinks for a note (notes that link to the given relative_path)
+    pub fn get_backlinks(&self, relative_path: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+
+        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at
+                   FROM notes n
+                   INNER JOIN links l ON n.relative_path = l.source_path
+                   WHERE l.target_path = ?1
+                   ORDER BY n.updated_at DESC";
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![relative_path], |row| {
+            let tags_str: String = row.get(3)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+
+            Ok(NoteMeta {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                relative_path: row.get(2)?,
+                tags,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// List all tags with their note counts
+    pub fn list_tags(&self) -> Result<Vec<(String, i32)>, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sql = "SELECT t.name, COUNT(nt.note_id) as count
+                   FROM tags t
+                   LEFT JOIN note_tags nt ON t.name = nt.tag_name
+                   GROUP BY t.name
+                   ORDER BY count DESC, t.name ASC";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// Get all notes that have a specific tag
+    pub fn get_notes_by_tag(&self, tag: &str) -> Result<Vec<NoteMeta>, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at
+                   FROM notes n
+                   INNER JOIN note_tags nt ON n.id = nt.note_id
+                   WHERE nt.tag_name = ?1
+                   ORDER BY n.updated_at DESC";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![tag], |row| {
+            let tags_str: String = row.get(3)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+
+            Ok(NoteMeta {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                relative_path: row.get(2)?,
+                tags,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+
+    /// List all templates in the vault
+    pub fn list_templates(&self) -> Result<Vec<String>, VaultError> {
+        let templates_dir = self.root_path.join(".vault").join("templates");
+        if !templates_dir.exists() {
+            fs::create_dir_all(&templates_dir)?;
+            return Ok(vec![]);
+        }
+        let mut templates = Vec::new();
+        for entry in fs::read_dir(&templates_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "md") {
+                if let Some(name) = path.file_stem().and_then(|n| n.to_str()) {
+                    templates.push(name.to_string());
+                }
+            }
+        }
+        Ok(templates)
+    }
+
+    /// Get the content of a template by name
+    pub fn get_template_content(&self, name: &str) -> Result<String, VaultError> {
+        let path = self.root_path.join(".vault").join("templates").join(format!("{}.md", name));
+        fs::read_to_string(&path).map_err(VaultError::Io)
+    }
+
+    /// Save content as a template with the given name
+    pub fn save_as_template(&self, name: &str, content: &str) -> Result<(), VaultError> {
+        let templates_dir = self.root_path.join(".vault").join("templates");
+        if !templates_dir.exists() {
+            fs::create_dir_all(&templates_dir)?;
+        }
+        let path = templates_dir.join(format!("{}.md", name));
+        fs::write(&path, content).map_err(VaultError::Io)
+    }
+
+    /// Import notes from an Obsidian vault directory
+    /// Obsidian vaults are directories with .md files and YAML frontmatter
+    pub fn import_from_obsidian(&self, source_dir: &Path) -> Result<Vec<NoteMeta>, VaultError> {
+        for entry in walkdir::WalkDir::new(source_dir) {
+            let entry = entry.map_err(|e: walkdir::Error| VaultError::Other(e.to_string()))?;
+            let path = entry.path();
+
+            if path.extension().map_or(false, |e| e == "md") {
+                let relative = path.strip_prefix(source_dir).map_err(|e| VaultError::Other(e.to_string()))?;
+                let dest = self.root_path.join(relative);
+
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                fs::copy(path, &dest)?;
+            }
+        }
+
+        self.full_scan()
+    }
+
+    /// Import notes from a Notion export directory
+    /// Notion exports contain .md files with UUID suffixes and CSV databases
+    pub fn import_from_notion(&self, source_path: &Path) -> Result<Vec<NoteMeta>, VaultError> {
+        for entry in walkdir::WalkDir::new(source_path) {
+            let entry = entry.map_err(|e: walkdir::Error| VaultError::Other(e.to_string()))?;
+            let path = entry.path();
+
+            if path.extension().map_or(false, |e| e == "md") {
+                let content = fs::read_to_string(path)?;
+
+                let title = content.lines()
+                    .find(|l| l.starts_with("# "))
+                    .map(|l| l.trim_start_matches("# ").trim())
+                    .unwrap_or_else(|| {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Untitled")
+                    })
+                    .to_string();
+
+                let cleaned = clean_notion_markdown(&content);
+
+                let filename = format!("{}.md", sanitize_filename(&title));
+                let dest = self.root_path.join(&filename);
+                fs::write(&dest, cleaned)?;
+            }
+        }
+
+        self.full_scan()
+    }
+
+    /// Import notes from a Joplin JEX export file
+    /// JEX files are tar archives containing JSON note objects
+    pub fn import_from_joplin(&self, jex_path: &Path) -> Result<Vec<NoteMeta>, VaultError> {
+        let file = fs::File::open(jex_path)?;
+        let mut archive = tar::Archive::new(file);
+
+        for entry in archive.entries().map_err(VaultError::Io)? {
+            let mut entry = entry.map_err(VaultError::Io)?;
+            let mut content = String::new();
+            entry.read_to_string(&mut content).map_err(VaultError::Io)?;
+
+            if let Ok(note_data) = serde_json::from_str::<serde_json::Value>(&content) {
+                let title = note_data["title"].as_str().unwrap_or("Untitled");
+                let body = note_data["body"].as_str().unwrap_or("");
+
+                let filename = format!("{}.md", sanitize_filename(title));
+                let dest = self.root_path.join(&filename);
+
+                let full_content = format!("---\ntitle: {}\n---\n\n{}", title, body);
+                fs::write(&dest, full_content)?;
+            }
+        }
+
+        self.full_scan()
+    }
+
+    /// Export a note as a standalone HTML file
+    pub fn export_note_as_html(&self, relative_path: &str, output_path: &str) -> Result<(), VaultError> {
+        let content = fs::read_to_string(self.root_path.join(relative_path))?;
+
+        // Convert markdown to HTML using pulldown-cmark
+        let mut html_output = String::new();
+        let parser = pulldown_cmark::Parser::new(&content);
+        pulldown_cmark::html::push_html(&mut html_output, parser);
+
+        let full_html = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{}</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; line-height: 1.6; color: #1a1a2e; }}
+h1, h2, h3 {{ margin-top: 1.5em; }}
+code {{ background: #f4f4f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }}
+pre {{ background: #f4f4f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }}
+blockquote {{ border-left: 3px solid #6366f1; margin: 1em 0; padding: 0.5em 1em; color: #6b7280; }}
+a {{ color: #6366f1; }}
+</style>
+</head>
+<body>
+{}
+</body>
+</html>"#, relative_path, html_output);
+
+        fs::write(output_path, full_html).map_err(VaultError::Io)
+    }
+
+    /// Get all links from the links table
+    pub fn get_all_links(&self) -> Result<Vec<(String, String)>, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sql = "SELECT source_path, target_path FROM links";
+        let mut stmt = conn.prepare(sql).map_err(VaultError::Sqlite)?;
+        let links = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(VaultError::Sqlite)?
+        .filter_map(|r| r.ok())
+        .collect();
+        Ok(links)
     }
 
     /// Check if a path is a vault
@@ -427,6 +757,42 @@ impl Vault {
         // Fallback: use filename-style or "Untitled"
         "Untitled".to_string()
     }
+
+    /// Extract inline tags from markdown content (e.g., #tag patterns in the body)
+    /// Skips lines starting with # (headings)
+    fn extract_inline_tags(content: &str) -> Vec<String> {
+        let mut tags = Vec::new();
+        let re = regex::Regex::new(r"(?m)(?<!^)(?<!\w)#(\w[\w/-]*)").unwrap();
+        for cap in re.captures_iter(content) {
+            let tag = cap[1].to_string();
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+        tags
+    }
+
+    /// Extract [[wikilinks]] from markdown content
+    /// Returns Vec of (target_path, link_text, target_heading)
+    fn extract_wikilinks(content: &str) -> Vec<(String, String, String)> {
+        let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
+        re.captures_iter(content)
+            .filter_map(|cap| {
+                let inner = cap.get(1)?.as_str();
+                let (target, heading) = if let Some(pos) = inner.find('#') {
+                    (&inner[..pos], inner[pos + 1..].to_string())
+                } else {
+                    (inner, String::new())
+                };
+                let target_path = if target.ends_with(".md") {
+                    target.to_string()
+                } else {
+                    format!("{}.md", target)
+                };
+                Some((target_path, target.to_string(), heading))
+            })
+            .collect()
+    }
 }
 
 /// Parse tags value from frontmatter.
@@ -453,6 +819,30 @@ fn parse_tags_value(value: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+
+/// Clean Notion-specific markdown formatting
+/// Removes UUID suffixes from headings (e.g., "Title abc123" -> "Title")
+fn clean_notion_markdown(content: &str) -> String {
+    let re = regex::Regex::new(r"^(#{1,6}\s+.+?)\s+[a-f0-9]{32}$").unwrap();
+    let result: Vec<String> = content.lines().map(|line| {
+        if let Some(caps) = re.captures(line) {
+            caps.get(1).map(|m| m.as_str()).unwrap_or(line).to_string()
+        } else {
+            line.to_string()
+        }
+    }).collect();
+    result.join("\n")
+}
+
+/// Sanitize a string for use as a filename
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -520,5 +910,22 @@ mod tests {
     fn test_parse_tags_value_comma() {
         let result = parse_tags_value("rust, tauri");
         assert_eq!(result, vec!["rust", "tauri"]);
+    }
+
+    #[test]
+    fn test_extract_wikilinks() {
+        let content = "This links to [[My Note]] and [[Another Note#Section]].";
+        let links = Vault::extract_wikilinks(content);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0], ("My Note.md".to_string(), "My Note".to_string(), String::new()));
+        assert_eq!(links[1], ("Another Note.md".to_string(), "Another Note".to_string(), "Section".to_string()));
+    }
+
+    #[test]
+    fn test_extract_wikilinks_with_extension() {
+        let content = "Link to [[notes.md]].";
+        let links = Vault::extract_wikilinks(content);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "notes.md");
     }
 }

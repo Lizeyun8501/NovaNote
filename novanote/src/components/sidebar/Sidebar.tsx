@@ -2,6 +2,7 @@ import ThemeToggle from "../theme/ThemeToggle";
 import type { FileTreeNode } from "../../types";
 import FileTree from "./FileTree";
 import ActionBar from "./ActionBar";
+import TagsPanel from "../tags/TagsPanel";
 import { useState } from "react";
 
 interface SidebarProps {
@@ -10,8 +11,16 @@ interface SidebarProps {
   onSelectFile: (path: string) => void;
   onOpenVault: () => void;
   onNewNote: () => void;
+  onNewCanvas?: () => void;
   onRename?: (oldPath: string, newPath: string) => void;
   onDelete?: (path: string) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  selectedTag?: string | null;
+  onSelectTag?: (tag: string) => void;
+  onOpenDailyNote?: () => void;
+  onOpenTemplateSelector?: () => void;
+  onImport?: () => void;
 }
 
 export default function Sidebar({
@@ -20,10 +29,27 @@ export default function Sidebar({
   onSelectFile,
   onOpenVault,
   onNewNote,
+  onNewCanvas,
   onRename,
   onDelete,
+  collapsed: collapsedProp,
+  onToggleCollapsed,
+  selectedTag,
+  onSelectTag,
+  onOpenDailyNote,
+  onOpenTemplateSelector,
+  onImport,
 }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedInternal, setCollapsedInternal] = useState(false);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
+  const collapsed = collapsedProp ?? collapsedInternal;
+  const toggleCollapsed = onToggleCollapsed ?? (() => setCollapsedInternal((prev) => !prev));
+
+  const handleSelectTag = (tag: string) => {
+    if (onSelectTag) {
+      onSelectTag(selectedTag === tag ? "" : tag);
+    }
+  };
 
   return (
     <aside
@@ -51,7 +77,7 @@ export default function Sidebar({
         <div className="flex items-center gap-1">
           {!collapsed && <ThemeToggle />}
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={toggleCollapsed}
             className="px-1 py-1 rounded text-base hover:opacity-80"
             style={{ color: "var(--text-secondary)" }}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -63,7 +89,7 @@ export default function Sidebar({
 
       {/* Action Bar */}
       {!collapsed && (
-        <ActionBar onOpenVault={onOpenVault} onNewNote={onNewNote} />
+        <ActionBar onOpenVault={onOpenVault} onNewNote={onNewNote} onNewCanvas={onNewCanvas} onOpenDailyNote={onOpenDailyNote} onOpenTemplateSelector={onOpenTemplateSelector} onImport={onImport} />
       )}
 
       {/* File Tree */}
@@ -83,6 +109,40 @@ export default function Sidebar({
               onSelect={onSelectFile}
               onRename={onRename}
               onDelete={onDelete}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Tags Section */}
+      {!collapsed && onSelectTag && (
+        <div
+          className="border-t"
+          style={{ borderColor: "var(--border-color)" }}
+        >
+          <button
+            onClick={() => setTagsExpanded(!tagsExpanded)}
+            className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium border-none cursor-pointer"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <span>Tags</span>
+            <span
+              style={{
+                transform: tagsExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "transform 0.15s ease",
+                display: "inline-block",
+              }}
+            >
+              ▸
+            </span>
+          </button>
+          {tagsExpanded && (
+            <TagsPanel
+              onSelectTag={handleSelectTag}
+              selectedTag={selectedTag ?? null}
             />
           )}
         </div>

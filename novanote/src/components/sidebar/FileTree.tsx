@@ -138,7 +138,7 @@ function FileTreeNodeItem({
             : "transparent",
         }}
       >
-        <span>📄</span>
+        <span>{node.path.endsWith(".canvas") ? "🎨" : "📄"}</span>
         <span className="truncate">{node.name}</span>
       </button>
 
