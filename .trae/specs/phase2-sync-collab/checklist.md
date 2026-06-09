@@ -1,0 +1,26 @@
+# Checklist
+
+- [x] YrsDoc 可正确从 Markdown 创建
+- [x] YrsDoc 可正确导出为 Markdown（无损）
+- [x] CRDT Update 增量生成正确
+- [x] CRDT Update 应用后 YrsDoc 状态正确
+- [x] Argon2id 密钥派生正确
+- [x] XChaCha20-Poly1305 加密/解密一致
+- [x] 加密后密文长度 > 明文（含 nonce/tag）
+- [x] 错误密钥解密失败
+- [x] Sync Server 可启动并监听端口
+- [x] Sync Server WebSocket 连接认证成功
+- [x] 加密 Update 中继转发正确
+- [x] PostgreSQL blob 存储读写正确
+- [x] 客户端连接服务器成功
+- [x] 客户端推送 Update 到服务器
+- [x] 客户端拉取 Update 并合并
+- [x] 离线队列重放正确
+- [x] 主密码设置 UI 正常
+- [x] 同步状态指示器显示正确
+- [x] 同步设置面板功能完整
+- [x] Docker Compose 配置可启动所有服务
+- [x] novanote-sync-server 编译成功
+- [x] 移动端响应式布局正常
+- [x] 移动端编辑器触控正常
+- [x] Rust 条件编译 WASM target 正常（`native` feature 控制 vault/sync 模块编译；`crdt`/`crypto` 无原生依赖，WASM 环境通过 `#[cfg(feature = "native")]` 排除原生模块后可直接编译）

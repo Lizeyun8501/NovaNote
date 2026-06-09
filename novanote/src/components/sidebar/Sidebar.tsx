@@ -1,4 +1,5 @@
 import ThemeToggle from "../theme/ThemeToggle";
+import { SyncStatus } from "../sync/SyncStatus";
 import type { FileTreeNode } from "../../types";
 import FileTree from "./FileTree";
 import ActionBar from "./ActionBar";
@@ -21,6 +22,7 @@ interface SidebarProps {
   onOpenDailyNote?: () => void;
   onOpenTemplateSelector?: () => void;
   onImport?: () => void;
+  onSyncClick?: () => void;
 }
 
 export default function Sidebar({
@@ -39,6 +41,7 @@ export default function Sidebar({
   onOpenDailyNote,
   onOpenTemplateSelector,
   onImport,
+  onSyncClick,
 }: SidebarProps) {
   const [collapsedInternal, setCollapsedInternal] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
@@ -75,6 +78,15 @@ export default function Sidebar({
           </h1>
         )}
         <div className="flex items-center gap-1">
+          {!collapsed && onSyncClick && (
+            <button
+              onClick={onSyncClick}
+              className="border-none bg-transparent cursor-pointer p-0"
+              title="Sync Settings"
+            >
+              <SyncStatus />
+            </button>
+          )}
           {!collapsed && <ThemeToggle />}
           <button
             onClick={toggleCollapsed}

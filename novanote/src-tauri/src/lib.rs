@@ -28,6 +28,18 @@ struct GraphData {
     edges: Vec<GraphEdge>,
 }
 
+#[derive(Serialize)]
+struct SyncStatusResponse {
+    enabled: bool,
+    connected: bool,
+    server_url: String,
+    vault_id: String,
+    master_password_set: bool,
+    encryption_ready: bool,
+    offline_queue_size: usize,
+    last_sync: i64,
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     novanote_tauri::format_greeting(name)
@@ -238,6 +250,55 @@ fn vault_save_as_template(state: State<AppState>, name: String, content: String)
     vault.save_as_template(&name, &content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn sync_configure(state: State<AppState>, server_url: String, vault_id: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.sync_engine.configure(server_url, vault_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_enable(state: State<AppState>) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.sync_engine.enable();
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_disable(state: State<AppState>) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.sync_engine.disable();
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_get_status(state: State<AppState>) -> Result<SyncStatusResponse, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let status = vault.sync_engine.get_status();
+    Ok(SyncStatusResponse {
+        enabled: status.enabled,
+        connected: status.connected,
+        server_url: status.server_url,
+        vault_id: status.vault_id,
+        master_password_set: status.master_password_set,
+        encryption_ready: status.encryption_ready,
+        offline_queue_size: status.offline_queue_size,
+        last_sync: status.last_sync,
+    })
+}
+
+#[tauri::command]
+fn sync_set_master_password(state: State<AppState>, password: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.sync_engine.set_master_password(&password);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -267,7 +328,12 @@ pub fn run() {
             vault_get_template_content,
             vault_save_as_template,
             vault_read_canvas,
-            vault_write_canvas
+            vault_write_canvas,
+            sync_configure,
+            sync_enable,
+            sync_disable,
+            sync_get_status,
+            sync_set_master_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

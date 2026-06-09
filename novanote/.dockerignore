@@ -1,0 +1,8 @@
+node_modules/
+dist/
+target/release/
+target/debug/
+.git/
+.env
+*.md
+!README.md

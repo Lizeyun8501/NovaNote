@@ -10,13 +10,29 @@ import TemplateSelector from "./components/templates/TemplateSelector";
 import ImportWizard from "./components/import/ImportWizard";
 import CanvasEditor from "./components/canvas/CanvasEditor";
 import CommandPalette from "./components/command-palette/CommandPalette";
+import { SetupPassword } from "./components/sync/SetupPassword";
+import { SyncSettings } from "./components/sync/SyncSettings";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
+import { MobileLayout } from "./components/layout/MobileLayout";
 import type { NoteMeta, FileTreeNode } from "./types";
 import "./App.css";
+import "./styles/responsive.css";
 
 const VAULT_STORAGE_KEY = "novanote-vault";
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    setMatches(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [query]);
+  return matches;
+}
 
 function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
@@ -33,6 +49,9 @@ function App() {
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [canvasPath, setCanvasPath] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [showSyncSettings, setShowSyncSettings] = useState(false);
+  const [showPasswordSetup, setShowPasswordSetup] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 768px)");
 
   // Cmd/Ctrl+P keyboard shortcut to open command palette
   useEffect(() => {
@@ -431,30 +450,27 @@ function App() {
     [handleNewNote, handleNewCanvas, handleOpenDailyNote],
   );
 
-  return (
-    <div
-      className="flex h-screen overflow-hidden"
-      style={{
-        backgroundColor: "var(--bg-primary)",
-        color: "var(--text-primary)",
-      }}
-    >
-      <Sidebar
-        files={fileTree}
-        selectedPath={selectedPath}
-        onSelectFile={handleSelectFile}
-        onOpenVault={handleOpenVault}
-        onNewNote={handleNewNote}
-        onNewCanvas={handleNewCanvas}
-        onRename={handleRename}
-        onDelete={handleDelete}
-        selectedTag={selectedTag}
-        onSelectTag={handleSelectTag}
-        onOpenDailyNote={handleOpenDailyNote}
-        onOpenTemplateSelector={() => setShowTemplateSelector(true)}
-        onImport={() => setShowImportWizard(true)}
-      />
+  const sidebarNode = (
+    <Sidebar
+      files={fileTree}
+      selectedPath={selectedPath}
+      onSelectFile={handleSelectFile}
+      onOpenVault={handleOpenVault}
+      onNewNote={handleNewNote}
+      onNewCanvas={handleNewCanvas}
+      onRename={handleRename}
+      onDelete={handleDelete}
+      selectedTag={selectedTag}
+      onSelectTag={handleSelectTag}
+      onOpenDailyNote={handleOpenDailyNote}
+      onOpenTemplateSelector={() => setShowTemplateSelector(true)}
+      onImport={() => setShowImportWizard(true)}
+      onSyncClick={() => setShowSyncSettings(true)}
+    />
+  );
 
+  const contentNode = (
+    <>
       <main className="flex-1 flex flex-col min-w-0">
         {/* Editor header */}
         <header
@@ -582,6 +598,45 @@ function App() {
         onClose={() => setCommandPaletteOpen(false)}
         commands={commands}
       />
+
+      <SyncSettings
+        isOpen={showSyncSettings}
+        onClose={() => setShowSyncSettings(false)}
+        onPasswordSetup={() => {
+          setShowSyncSettings(false);
+          setShowPasswordSetup(true);
+        }}
+      />
+
+      {showPasswordSetup && (
+        <SetupPassword
+          onComplete={() => {
+            setShowPasswordSetup(false);
+          }}
+          onCancel={() => setShowPasswordSetup(false)}
+        />
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <MobileLayout sidebar={sidebarNode}>
+        {contentNode}
+      </MobileLayout>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{
+        backgroundColor: "var(--bg-primary)",
+        color: "var(--text-primary)",
+      }}
+    >
+      {sidebarNode}
+      {contentNode}
     </div>
   );
 }
