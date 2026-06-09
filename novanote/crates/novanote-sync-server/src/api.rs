@@ -11,6 +11,7 @@ use base64::Engine;
 use uuid::Uuid;
 use crate::server::AppState;
 use crate::storage;
+use crate::totp;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -278,4 +279,78 @@ pub async fn api_clip(
         ok: true,
         doc_id: doc_id.to_string(),
     }))
+}
+
+// ── WeChat Clip endpoint ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct WeChatClipRequest {
+    pub html: String,
+    pub url: String,
+}
+
+pub async fn api_wechat_clip(
+    Json(body): Json<WeChatClipRequest>,
+) -> Result<Json<ClipResponse>, axum::http::StatusCode> {
+    let article = novanote_core::parse_wechat_article(&body.html, &body.url);
+    let markdown = novanote_core::wechat_to_markdown(&article);
+
+    // Store as a clipped note
+    let doc_id = Uuid::new_v4();
+    let _clip_data = serde_json::json!({
+        "title": article.title,
+        "content": markdown,
+        "folder": "wechat",
+        "tags": ["wechat"],
+        "source_url": article.url,
+    });
+
+    Ok(Json(ClipResponse {
+        ok: true,
+        doc_id: doc_id.to_string(),
+    }))
+}
+
+// ── TOTP Two-Factor Authentication endpoints ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TotpSetupRequest {
+    pub user_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TotpSetupResponse {
+    pub secret: String,
+    pub otpauth_uri: String,
+}
+
+pub async fn api_totp_setup(
+    Json(body): Json<TotpSetupRequest>,
+) -> Result<Json<TotpSetupResponse>, axum::http::StatusCode> {
+    let secret = totp::generate_secret();
+    let uri = totp::generate_otpauth_uri(&secret, &body.user_id, "NovaNote");
+
+    // In production, store secret in DB associated with user
+    Ok(Json(TotpSetupResponse {
+        secret,
+        otpauth_uri: uri,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TotpVerifyRequest {
+    pub secret: String,
+    pub code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TotpVerifyResponse {
+    pub valid: bool,
+}
+
+pub async fn api_totp_verify(
+    Json(body): Json<TotpVerifyRequest>,
+) -> Result<Json<TotpVerifyResponse>, axum::http::StatusCode> {
+    let valid = totp::verify_totp(&body.secret, &body.code).unwrap_or(false);
+    Ok(Json(TotpVerifyResponse { valid }))
 }

@@ -264,7 +264,7 @@ pub async fn writing_assist(
 }
 
 /// Try to parse a JSON array of strings from AI response
-fn parse_json_array(text: &str) -> Option<Vec<String>> {
+pub fn parse_json_array(text: &str) -> Option<Vec<String>> {
     // Find text between [ and ]
     let start = text.find('[')?;
     let end = text.rfind(']')?;

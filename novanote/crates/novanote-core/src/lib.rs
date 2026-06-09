@@ -267,6 +267,12 @@ pub mod ai;
 #[cfg(feature = "native")]
 pub use ai::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult, generate_tags, generate_summary, writing_assist, check_ollama};
 
+// OCR text recognition (native - uses reqwest for HTTP)
+#[cfg(feature = "native")]
+pub mod ocr;
+#[cfg(feature = "native")]
+pub use ocr::{OcrConfig, OcrResult, ocr_image, ocr_images};
+
 // Email import (native - uses mailparse)
 #[cfg(feature = "native")]
 pub mod email_import;
@@ -310,6 +316,54 @@ pub use sync_s3::{S3Config, S3Backend};
 mod vault_impl;
 #[cfg(feature = "native")]
 pub use vault_impl::Vault;
+
+#[cfg(feature = "native")]
+pub mod audit_log;
+#[cfg(feature = "native")]
+pub use audit_log::{AuditEntry, AuditLogConfig, AuditLog};
+
+#[cfg(feature = "native")]
+pub mod whisper;
+#[cfg(feature = "native")]
+pub use whisper::{WhisperConfig, TranscriptionResult, transcribe_audio, transcribe_audio_bytes};
+
+#[cfg(feature = "native")]
+pub mod ai_graph;
+#[cfg(feature = "native")]
+pub use ai_graph::{GraphAnalysisConfig, SuggestedConnection, ClusterInfo, GraphAnalysisResult, analyze_graph, summarize_cluster};
+
+#[cfg(feature = "native")]
+pub mod integrations;
+#[cfg(feature = "native")]
+pub use integrations::{
+    GitHubConfig, GitHubIssue, github_list_issues, github_issue_to_markdown,
+    SlackConfig, SlackMessage, slack_list_messages, slack_messages_to_markdown,
+};
+
+#[cfg(feature = "native")]
+pub mod wechat;
+#[cfg(feature = "native")]
+pub use wechat::{WeChatArticle, parse_wechat_article, wechat_to_markdown};
+
+#[cfg(feature = "native")]
+pub mod biometric;
+#[cfg(feature = "native")]
+pub use biometric::{BiometricConfig, store_in_keychain, retrieve_from_keychain, delete_from_keychain, is_biometric_available};
+
+#[cfg(feature = "native")]
+pub mod webauthn;
+#[cfg(feature = "native")]
+pub use webauthn::{
+    WebAuthnConfig, CredentialRegistration, RegistrationChallenge,
+    AuthenticationChallenge, AuthVerificationResult,
+    generate_registration_challenge, generate_authentication_challenge,
+    verify_registration, verify_authentication,
+};
+
+#[cfg(feature = "native")]
+pub mod multimodal;
+#[cfg(feature = "native")]
+pub use multimodal::{MultiModalConfig, ImageAnalysisResult, analyze_image, describe_image, tag_image, image_to_note};
 
 #[cfg(feature = "native")]
 pub mod protobuf;

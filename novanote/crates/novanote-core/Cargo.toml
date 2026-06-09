@@ -36,3 +36,5 @@ mailparse = "0.15"
 tokio = { version = "1", features = ["sync", "time"] }
 hmac = "0.12"
 sha2 = "0.10"
+dirs = "5"
+whoami = "1"

@@ -5,6 +5,7 @@ mod auth;
 mod storage;
 mod ws;
 mod api;
+mod totp;
 
 #[tokio::main]
 async fn main() {

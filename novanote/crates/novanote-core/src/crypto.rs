@@ -11,7 +11,8 @@ use zeroize::Zeroizing;
 pub fn derive_key(password: &str, salt: Option<&[u8]>) -> (Zeroizing<[u8; 32]>, [u8; 32]) {
     let actual_salt: [u8; 32] = if let Some(s) = salt {
         let mut arr = [0u8; 32];
-        arr.copy_from_slice(&s[..32.min(s.len())]);
+        let len = 32.min(s.len());
+        arr[..len].copy_from_slice(&s[..len]);
         arr
     } else {
         let mut arr = [0u8; 32];

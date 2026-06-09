@@ -128,6 +128,7 @@ impl Vault {
                 target_path TEXT NOT NULL,
                 link_text TEXT NOT NULL,
                 target_heading TEXT DEFAULT '',
+                target_block_id TEXT DEFAULT '',
                 FOREIGN KEY (source_path) REFERENCES notes(relative_path) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_path);
@@ -200,10 +201,10 @@ impl Vault {
         ).unwrap_or(id.clone());
         conn.execute("DELETE FROM links WHERE source_path = ?1", params![relative_path])?;
         let wikilinks = Self::extract_wikilinks(&content);
-        for (target_path, link_text, target_heading) in &wikilinks {
+        for (target_path, link_text, target_heading, target_block_id) in &wikilinks {
             conn.execute(
-                "INSERT INTO links (source_path, target_path, link_text, target_heading) VALUES (?1, ?2, ?3, ?4)",
-                params![relative_path, target_path, link_text, target_heading],
+                "INSERT INTO links (source_path, target_path, link_text, target_heading, target_block_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![relative_path, target_path, link_text, target_heading, target_block_id],
             )?;
         }
         // Update tags: delete old associations, insert new
@@ -397,6 +398,29 @@ impl Vault {
                 tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
                 created_at: row.get(4)?, updated_at: row.get(5)?,
             })
+        })?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
+    pub fn get_backlinks_with_blocks(&self, relative_path: &str) -> Result<Vec<(NoteMeta, String, String)>, VaultError> {
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at,
+                          l.target_heading, l.target_block_id
+                   FROM notes n INNER JOIN links l ON n.relative_path = l.source_path
+                   WHERE l.target_path = ?1 ORDER BY n.updated_at DESC";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![relative_path], |row| {
+            Ok((
+                NoteMeta {
+                    id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
+                    tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+                    created_at: row.get(4)?, updated_at: row.get(5)?,
+                },
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+            ))
         })?;
         let mut results = Vec::new();
         for row in rows { results.push(row?); }
@@ -686,17 +710,33 @@ a {{ color: #6366f1; }}
         tags
     }
 
-    fn extract_wikilinks(content: &str) -> Vec<(String, String, String)> {
+    fn extract_wikilinks(content: &str) -> Vec<(String, String, String, String)> {
         let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
         re.captures_iter(content).filter_map(|cap| {
             let inner = cap.get(1)?.as_str();
-            let (target, heading) = if let Some(pos) = inner.find('#') {
-                (&inner[..pos], inner[pos + 1..].to_string())
+            // Check for ^block-id first (can appear directly after note name or after #heading)
+            // e.g. [[Note^block-123]] or [[Note#heading^block-123]]
+            let (target, heading, block_id) = if let Some(pos) = inner.find('#') {
+                let target_part = &inner[..pos];
+                let fragment = &inner[pos + 1..];
+                // Distinguish block IDs (^id) from headings
+                if let Some(caret_pos) = fragment.find('^') {
+                    let heading_part = &fragment[..caret_pos];
+                    let block = &fragment[caret_pos + 1..];
+                    (target_part, heading_part.to_string(), block.to_string())
+                } else {
+                    (target_part, fragment.to_string(), String::new())
+                }
+            } else if let Some(pos) = inner.find('^') {
+                // ^block-id directly after note name: [[Note^block-123]]
+                let target_part = &inner[..pos];
+                let block = &inner[pos + 1..];
+                (target_part, String::new(), block.to_string())
             } else {
-                (inner, String::new())
+                (inner, String::new(), String::new())
             };
             let target_path = if target.ends_with(".md") { target.to_string() } else { format!("{}.md", target) };
-            Some((target_path, target.to_string(), heading))
+            Some((target_path, target.to_string(), heading, block_id))
         }).collect()
     }
 }
@@ -838,8 +878,18 @@ mod tests {
         let content = "This links to [[My Note]] and [[Another Note#Section]].";
         let links = Vault::extract_wikilinks(content);
         assert_eq!(links.len(), 2);
-        assert_eq!(links[0], ("My Note.md".to_string(), "My Note".to_string(), String::new()));
-        assert_eq!(links[1], ("Another Note.md".to_string(), "Another Note".to_string(), "Section".to_string()));
+        assert_eq!(links[0], ("My Note.md".to_string(), "My Note".to_string(), String::new(), String::new()));
+        assert_eq!(links[1], ("Another Note.md".to_string(), "Another Note".to_string(), "Section".to_string(), String::new()));
+    }
+
+    #[test]
+    fn test_extract_wikilinks_with_block_id() {
+        let content = "Link to [[Note^block-123]] and [[Other#heading]] and [[Third^abc]].";
+        let links = Vault::extract_wikilinks(content);
+        assert_eq!(links.len(), 3);
+        assert_eq!(links[0], ("Note.md".to_string(), "Note".to_string(), String::new(), "block-123".to_string()));
+        assert_eq!(links[1], ("Other.md".to_string(), "Other".to_string(), "heading".to_string(), String::new()));
+        assert_eq!(links[2], ("Third.md".to_string(), "Third".to_string(), String::new(), "abc".to_string()));
     }
 
     #[test]

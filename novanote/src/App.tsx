@@ -17,6 +17,7 @@ import CalendarView from "./components/calendar/CalendarView";
 import PluginMarket from "./components/plugin/PluginMarket";
 import SqlQueryPanel from "./components/sql/SqlQueryPanel";
 import MindMapView from "./components/mindmap/MindMapView";
+import TableView from "./components/tableview/TableView";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
@@ -61,6 +62,7 @@ function App() {
   const [showPluginMarket, setShowPluginMarket] = useState(false);
   const [showSqlQuery, setShowSqlQuery] = useState(false);
   const [showMindMap, setShowMindMap] = useState(false);
+  const [showTableView, setShowTableView] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState<string>("");
   const isMobile = useMediaQuery("(max-width: 768px)");
 
@@ -603,6 +605,13 @@ function App() {
         category: "View",
         execute: () => setShowMindMap(true),
       },
+      {
+        id: "table-view",
+        label: "Database View",
+        shortcut: undefined,
+        category: "View",
+        execute: () => setShowTableView(true),
+      },
     ],
     [handleNewNote, handleNewCanvas, handleOpenDailyNote],
   );
@@ -814,6 +823,17 @@ function App() {
         <MindMapView
           content={noteContent}
           onClose={() => setShowMindMap(false)}
+        />
+      )}
+
+      {showTableView && (
+        <TableView
+          notes={notes}
+          onSelectNote={(note) => {
+            handleSelectFile(note.relative_path);
+            setShowTableView(false);
+          }}
+          onClose={() => setShowTableView(false)}
         />
       )}
     </>

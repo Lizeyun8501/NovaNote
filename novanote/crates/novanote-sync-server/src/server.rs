@@ -75,6 +75,9 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
         .route("/api/v1/docs/{doc_id}/pull", get(crate::api::api_pull))
         .route("/api/v1/stats", get(crate::api::api_stats))
         .route("/api/v1/clip", post(crate::api::api_clip))
+        .route("/api/v1/clip/wechat", post(crate::api::api_wechat_clip))
+        .route("/api/v1/totp/setup", post(crate::api::api_totp_setup))
+        .route("/api/v1/totp/verify", post(crate::api::api_totp_verify))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await

@@ -2,6 +2,12 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { NoteMeta } from "../../types";
 
+interface BacklinkWithBlock {
+  note: NoteMeta;
+  target_heading: string;
+  target_block_id: string;
+}
+
 interface BacklinksPanelProps {
   currentPath: string | null;
   onSelectFile: (path: string) => void;
@@ -11,7 +17,7 @@ export default function BacklinksPanel({
   currentPath,
   onSelectFile,
 }: BacklinksPanelProps) {
-  const [backlinks, setBacklinks] = useState<NoteMeta[]>([]);
+  const [backlinks, setBacklinks] = useState<BacklinkWithBlock[]>([]);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   useEffect(() => {
@@ -22,10 +28,14 @@ export default function BacklinksPanel({
 
     const fetchBacklinks = async () => {
       try {
-        const result: NoteMeta[] = await invoke("vault_get_backlinks", {
+        const result: Array<[NoteMeta, string, string]> = await invoke("vault_get_backlinks_with_blocks", {
           relativePath: currentPath,
         });
-        setBacklinks(result);
+        setBacklinks(result.map(([note, target_heading, target_block_id]) => ({
+          note,
+          target_heading,
+          target_block_id,
+        })));
       } catch (err) {
         console.error("Failed to fetch backlinks:", err);
         setBacklinks([]);
@@ -107,9 +117,9 @@ export default function BacklinksPanel({
               No backlinks yet
             </p>
           ) : (
-            backlinks.map((note) => (
+            backlinks.map((bl) => (
               <div
-                key={note.id}
+                key={bl.note.id + bl.target_heading + bl.target_block_id}
                 className="backlink-item"
                 style={{
                   padding: "6px 12px",
@@ -118,7 +128,7 @@ export default function BacklinksPanel({
                   color: "var(--text-primary, #1f2937)",
                   borderBottom: "1px solid var(--border-color, #e5e7eb)",
                 }}
-                onClick={() => onSelectFile(note.relative_path)}
+                onClick={() => onSelectFile(bl.note.relative_path)}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLElement).style.backgroundColor =
                     "var(--bg-hover, #e5e7eb)";
@@ -128,7 +138,7 @@ export default function BacklinksPanel({
                     "transparent";
                 }}
               >
-                <div style={{ fontWeight: 500 }}>{note.title}</div>
+                <div style={{ fontWeight: 500 }}>{bl.note.title}</div>
                 <div
                   style={{
                     fontSize: "11px",
@@ -136,8 +146,27 @@ export default function BacklinksPanel({
                     marginTop: "2px",
                   }}
                 >
-                  {note.relative_path}
+                  {bl.note.relative_path}
                 </div>
+                {(bl.target_heading || bl.target_block_id) && (
+                  <div
+                    style={{
+                      fontSize: "10px",
+                      color: "var(--accent-color, #3b82f6)",
+                      marginTop: "2px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    {bl.target_heading && (
+                      <span>→ #{bl.target_heading}</span>
+                    )}
+                    {bl.target_block_id && (
+                      <span>→ ^{bl.target_block_id}</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}

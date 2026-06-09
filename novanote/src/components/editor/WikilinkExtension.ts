@@ -3,7 +3,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 export interface WikilinkOptions {
   HTMLAttributes: Record<string, string>;
-  onLinkClick: ((target: string) => void) | null;
+  onLinkClick: ((target: string, blockId?: string) => void) | null;
 }
 
 declare module "@tiptap/core" {
@@ -113,7 +113,15 @@ export const Wikilink = Mark.create<WikilinkOptions>({
             if (wikilinkEl && onLinkClick) {
               const linkTarget = wikilinkEl.getAttribute("data-target");
               if (linkTarget) {
-                onLinkClick(linkTarget);
+                // Support block references: [[note#block-id]]
+                const hashIndex = linkTarget.indexOf("#");
+                if (hashIndex !== -1) {
+                  const noteName = linkTarget.substring(0, hashIndex);
+                  const blockId = linkTarget.substring(hashIndex + 1);
+                  onLinkClick(noteName, blockId);
+                } else {
+                  onLinkClick(linkTarget);
+                }
                 return true;
               }
             }

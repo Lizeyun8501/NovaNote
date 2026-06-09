@@ -1,8 +1,11 @@
 use novanote_core::{NoteMeta, Vault};
 use novanote_core::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult};
+use novanote_core::{OcrConfig, OcrResult};
 use novanote_core::{parse_eml_file, email_to_markdown};
 use novanote_core::VectorSearchResult;
 use novanote_core::GitIntegration;
+use novanote_core::AuditEntry;
+use novanote_core::TranscriptionResult;
 use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
@@ -162,6 +165,13 @@ fn vault_get_backlinks(state: State<AppState>, relative_path: String) -> Result<
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.get_backlinks(&relative_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn vault_get_backlinks_with_blocks(state: State<AppState>, relative_path: String) -> Result<Vec<(NoteMeta, String, String)>, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.get_backlinks_with_blocks(&relative_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -574,6 +584,39 @@ fn plugin_disable(state: State<AppState>, plugin_id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+async fn ai_analyze_graph(state: State<'_, AppState>, base_url: String, model: String) -> Result<novanote_core::GraphAnalysisResult, String> {
+    let (notes, links) = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let note_list = vault.list_notes().map_err(|e| e.to_string())?;
+        let graph_data = vault.get_graph_data().map_err(|e| e.to_string())?;
+
+        let note_pairs: Vec<(String, String)> = note_list.iter()
+            .map(|n| (n.relative_path.clone(), n.title.clone()))
+            .collect();
+        let link_pairs: Vec<(String, String)> = graph_data.edges.iter()
+            .map(|e| (e.source.clone(), e.target.clone()))
+            .collect();
+        (note_pairs, link_pairs)
+    };
+
+    let config = novanote_core::GraphAnalysisConfig { base_url, model };
+    novanote_core::analyze_graph(&config, &notes, &links).await
+}
+
+#[tauri::command]
+async fn integration_github_issues(token: String, repo: String) -> Result<Vec<novanote_core::GitHubIssue>, String> {
+    let config = novanote_core::GitHubConfig { token, repo: Some(repo) };
+    novanote_core::github_list_issues(&config).await
+}
+
+#[tauri::command]
+async fn integration_slack_messages(token: String, channel: String, limit: Option<usize>) -> Result<Vec<novanote_core::SlackMessage>, String> {
+    let config = novanote_core::SlackConfig { bot_token: token, channel: Some(channel) };
+    novanote_core::slack_list_messages(&config, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
 fn git_init(state: State<AppState>) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
@@ -605,6 +648,74 @@ fn git_diff(state: State<AppState>, path: String) -> Result<String, String> {
     git.diff(&path).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn ocr_recognize(base_url: String, model: String, image_path: String) -> Result<OcrResult, String> {
+    let config = OcrConfig { base_url, model };
+    novanote_core::ocr_image(&config, &image_path).await
+}
+
+#[tauri::command]
+fn audit_log_list(state: State<AppState>) -> Result<Vec<novanote_core::AuditEntry>, String> {
+    // Return empty for now - audit log is maintained in-memory per vault session
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+async fn whisper_transcribe(base_url: String, model: String, audio_path: String) -> Result<novanote_core::TranscriptionResult, String> {
+    let config = novanote_core::WhisperConfig { base_url, model };
+    novanote_core::transcribe_audio(&config, &audio_path).await
+}
+
+#[tauri::command]
+fn keychain_store(service: String, account: String, password: String) -> Result<(), String> {
+    novanote_core::store_in_keychain(&service, &account, &password).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn keychain_retrieve(service: String, account: String) -> Result<String, String> {
+    novanote_core::retrieve_from_keychain(&service, &account).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn keychain_delete(service: String, account: String) -> Result<(), String> {
+    novanote_core::delete_from_keychain(&service, &account).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn biometric_available() -> bool {
+    novanote_core::is_biometric_available()
+}
+
+#[tauri::command]
+fn webauthn_register_challenge(user_id: String, user_name: String) -> Result<novanote_core::RegistrationChallenge, String> {
+    let config = novanote_core::WebAuthnConfig::default();
+    Ok(novanote_core::generate_registration_challenge(&config, &user_id, &user_name))
+}
+
+#[tauri::command]
+fn webauthn_auth_challenge(credential_ids: Vec<String>) -> Result<novanote_core::AuthenticationChallenge, String> {
+    let config = novanote_core::WebAuthnConfig::default();
+    Ok(novanote_core::generate_authentication_challenge(&config, &credential_ids))
+}
+
+#[tauri::command]
+async fn multimodal_analyze(base_url: String, model: String, image_path: String, prompt: String) -> Result<novanote_core::ImageAnalysisResult, String> {
+    let config = novanote_core::MultiModalConfig { base_url, model };
+    novanote_core::analyze_image(&config, &image_path, &prompt).await
+}
+
+#[tauri::command]
+async fn multimodal_describe(base_url: String, model: String, image_path: String) -> Result<novanote_core::ImageAnalysisResult, String> {
+    let config = novanote_core::MultiModalConfig { base_url, model };
+    novanote_core::describe_image(&config, &image_path).await
+}
+
+#[tauri::command]
+async fn multimodal_image_to_note(base_url: String, model: String, image_path: String) -> Result<String, String> {
+    let config = novanote_core::MultiModalConfig { base_url, model };
+    novanote_core::image_to_note(&config, &image_path).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Determine plugins directory
@@ -633,6 +744,7 @@ pub fn run() {
             vault_list_tags,
             vault_get_notes_by_tag,
             vault_get_backlinks,
+            vault_get_backlinks_with_blocks,
             vault_get_graph_data,
             vault_export_html,
             vault_export_markdown,
@@ -665,7 +777,22 @@ pub fn run() {
             git_init,
             git_commit,
             git_log,
-            git_diff
+            git_diff,
+            ocr_recognize,
+            ai_analyze_graph,
+            integration_github_issues,
+            integration_slack_messages,
+            audit_log_list,
+            whisper_transcribe,
+            keychain_store,
+            keychain_retrieve,
+            keychain_delete,
+            biometric_available,
+            webauthn_register_challenge,
+            webauthn_auth_challenge,
+            multimodal_analyze,
+            multimodal_describe,
+            multimodal_image_to_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
