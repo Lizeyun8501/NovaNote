@@ -5,6 +5,7 @@ use novanote_core::{parse_eml_file, email_to_markdown};
 use novanote_core::VectorSearchResult;
 use novanote_core::{RagConfig, RagAnswer};
 use novanote_core::SearchHit;
+use novanote_core::HybridSearchResult;
 use novanote_core::GitIntegration;
 use novanote_core::AuditEntry;
 use novanote_core::TranscriptionResult;
@@ -186,8 +187,11 @@ fn vault_write_note(state: State<AppState>, relative_path: String, content: Stri
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         let full_path = safe_vault_path(&vault.root_path, &relative_path)?;
         std::fs::write(&full_path, &content).map_err(|e| e.to_string())?;
-        // Re-index the file
-        vault.index_file(&full_path).map_err(|e| e.to_string())?;
+        // Re-index the file; roll back file write on failure
+        if let Err(e) = vault.index_file(&full_path) {
+            let _ = std::fs::remove_file(&full_path);
+            return Err(e.to_string());
+        }
     }
     // Dispatch NoteSaved event to plugins
     dispatch_plugin_event(&state, PluginEvent::NoteSaved { path: path_clone, content: content_clone });
@@ -204,9 +208,17 @@ fn vault_rename_note(state: State<AppState>, old_relative_path: String, new_rela
 
     std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
 
-    // Update index
-    vault.remove_file(&old_relative_path).map_err(|e| e.to_string())?;
-    vault.index_file(&new_path).map_err(|e| e.to_string())?;
+    // Update index — roll back rename on failure
+    if let Err(e) = vault.remove_file(&old_relative_path) {
+        let _ = std::fs::rename(&new_path, &old_path);
+        return Err(e.to_string());
+    }
+    if let Err(e) = vault.index_file(&new_path) {
+        // Roll back: rename file back and restore old index entry
+        let _ = std::fs::rename(&new_path, &old_path);
+        let _ = vault.index_file(&old_path);
+        return Err(e.to_string());
+    }
 
     Ok(())
 }
@@ -531,7 +543,10 @@ fn import_email_file(state: State<AppState>, eml_path: String) -> Result<String,
 
     let full_path = vault.root_path.join(&filename);
     std::fs::write(&full_path, &markdown).map_err(|e| e.to_string())?;
-    vault.index_file(&full_path).map_err(|e| e.to_string())?;
+    if let Err(e) = vault.index_file(&full_path) {
+        let _ = std::fs::remove_file(&full_path);
+        return Err(e.to_string());
+    }
 
     Ok(filename)
 }
@@ -556,7 +571,10 @@ fn import_email_content(state: State<AppState>, content: String) -> Result<Strin
 
     let full_path = vault.root_path.join(&filename);
     std::fs::write(&full_path, &markdown).map_err(|e| e.to_string())?;
-    vault.index_file(&full_path).map_err(|e| e.to_string())?;
+    if let Err(e) = vault.index_file(&full_path) {
+        let _ = std::fs::remove_file(&full_path);
+        return Err(e.to_string());
+    }
 
     Ok(filename)
 }
@@ -576,6 +594,24 @@ async fn ai_semantic_search(
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.semantic_search_with_embedding(&embedding).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_hybrid_search(
+    state: State<'_, AppState>,
+    query: String,
+    base_url: String,
+    model: String,
+    limit: Option<usize>,
+) -> Result<Vec<HybridSearchResult>, String> {
+    let embedding = novanote_core::generate_embedding(&base_url, &model, &query)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.hybrid_search(&query, &embedding, limit.unwrap_or(20), 60)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -969,6 +1005,7 @@ pub fn run() {
             import_email_file,
             import_email_content,
             ai_semantic_search,
+            ai_hybrid_search,
             ai_index_embedding,
             ai_index_all_embeddings,
             ai_embedding_status,

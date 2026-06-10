@@ -397,6 +397,74 @@ impl Vault {
         Ok(results)
     }
 
+    /// Hybrid search combining Tantivy BM25 and semantic embedding similarity
+    /// using Reciprocal Rank Fusion (RRF).
+    /// - `query`: the text query for BM25 search
+    /// - `query_embedding`: embedding vector for semantic search (generated externally)
+    /// - `limit`: max results to return
+    /// - `k`: RRF rank constant (default 60)
+    pub fn hybrid_search(
+        &self,
+        query: &str,
+        query_embedding: &[f32],
+        limit: usize,
+        k: usize,
+    ) -> Result<Vec<crate::HybridSearchResult>, VaultError> {
+        use std::collections::HashMap;
+
+        // Run both searches
+        let bm25_hits = self.search_advanced(query, limit * 2).unwrap_or_default();
+        let semantic_hits = self.semantic_search_with_embedding(query_embedding).unwrap_or_default();
+
+        // Build rank maps
+        let mut bm25_ranks: HashMap<String, usize> = HashMap::new();
+        for (rank, hit) in bm25_hits.iter().enumerate() {
+            bm25_ranks.entry(hit.path.clone()).or_insert(rank + 1);
+        }
+
+        let mut sem_ranks: HashMap<String, usize> = HashMap::new();
+        for (rank, hit) in semantic_hits.iter().enumerate() {
+            sem_ranks.entry(hit.relative_path.clone()).or_insert(rank + 1);
+        }
+
+        // Collect all unique paths from both result sets
+        let all_paths: HashMap<String, (f32, f32, String)> = {
+            let mut m = HashMap::new();
+            for hit in &bm25_hits {
+                m.entry(hit.path.clone()).or_insert((hit.score, 0.0, hit.title.clone()));
+            }
+            for hit in &semantic_hits {
+                let entry = m.entry(hit.relative_path.clone()).or_insert((0.0, hit.similarity, hit.title.clone()));
+                entry.1 = hit.similarity;
+            }
+            m
+        };
+
+        // Compute RRF score
+        let k_f = k as f32;
+        let mut fused: Vec<crate::HybridSearchResult> = all_paths
+            .into_iter()
+            .map(|(path, (bm25_score, semantic_score, title))| {
+                let rrf_bm25 = bm25_ranks.get(&path).map_or(0.0, |r| 1.0 / (k_f + *r as f32));
+                let rrf_sem = sem_ranks.get(&path).map_or(0.0, |r| 1.0 / (k_f + *r as f32));
+                let fusion_score = rrf_bm25 + rrf_sem;
+                crate::HybridSearchResult {
+                    relative_path: path,
+                    title,
+                    bm25_score,
+                    semantic_score,
+                    fusion_score,
+                }
+            })
+            .collect();
+
+        // Sort by fusion score descending
+        fused.sort_by(|a, b| b.fusion_score.partial_cmp(&a.fusion_score).unwrap_or(std::cmp::Ordering::Equal));
+        fused.truncate(limit);
+
+        Ok(fused)
+    }
+
     /// Store an embedding vector for a note
     pub fn store_embedding(&self, relative_path: &str, embedding: &[f32], model: &str) -> Result<(), VaultError> {
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
@@ -713,7 +781,10 @@ a {{ color: #6366f1; }}
             fs::create_dir_all(parent)?;
         }
         fs::write(&full_path, content)?;
-        self.index_file(&full_path)?;
+        if let Err(e) = self.index_file(&full_path) {
+            let _ = std::fs::remove_file(&full_path);
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -735,8 +806,15 @@ a {{ color: #6366f1; }}
             fs::create_dir_all(parent)?;
         }
         fs::rename(&old_full, &new_full)?;
-        self.remove_file(old_path)?;
-        self.index_file(&new_full)?;
+        if let Err(e) = self.remove_file(old_path) {
+            let _ = std::fs::rename(&new_full, &old_full);
+            return Err(e);
+        }
+        if let Err(e) = self.index_file(&new_full) {
+            let _ = std::fs::rename(&new_full, &old_full);
+            let _ = self.index_file(&old_full);
+            return Err(e);
+        }
         Ok(())
     }
 

@@ -287,6 +287,17 @@ pub mod vector_search;
 #[cfg(feature = "native")]
 pub use vector_search::{generate_embedding, cosine_similarity, serialize_embedding, deserialize_embedding, VectorSearchResult, VectorSearchConfig, register_cosine_similarity_fn, create_vector_table, store_embedding_sql, vector_search_sql};
 
+/// A hybrid search result combining BM25 full-text and semantic relevance.
+/// Uses Reciprocal Rank Fusion (RRF) to merge rankings from both backends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridSearchResult {
+    pub relative_path: String,
+    pub title: String,
+    pub bm25_score: f32,
+    pub semantic_score: f32,
+    pub fusion_score: f32,
+}
+
 // Tantivy advanced full-text search (native only)
 #[cfg(feature = "native")]
 pub mod tantivy_search;
