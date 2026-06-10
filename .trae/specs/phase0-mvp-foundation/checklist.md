@@ -1,0 +1,26 @@
+# Checklist
+
+- [x] `pnpm install` 无报错，所有依赖安装成功
+- [x] `cargo build` 无报错，Rust workspace 编译通过
+- [x] `pnpm tauri dev` 可启动桌面窗口，显示 React 前端
+- [x] TipTap 编辑器可正常输入文字并实时渲染
+- [x] Markdown 快捷键（#、**、*、-、>、```）均可正确渲染对应格式
+- [x] 编辑器工具栏按钮（加粗/斜体/标题/列表/代码块/撤销/重做）功能正常
+- [x] `getMarkdown()` 可正确导出 Markdown 字符串
+- [x] `setMarkdown(md)` 可正确将 Markdown 解析为富文本
+- [x] Vault 创建：选择目录后生成 `.vault/config.json` 和 `.vault/index.db`
+- [x] Vault 文件扫描：能递归扫描目录下的所有 .md 文件
+- [x] SQLite 索引正确存储笔记元数据（标题、路径、标签、时间戳）
+- [x] FTS5 全文搜索返回正确匹配结果
+- [x] 文件监听器：外部新增/修改/删除 .md 文件后，索引自动更新
+- [x] 索引重建：删除 index.db 后可从 .md 源文件重建
+- [x] 目录树正确展示 Vault 的完整文件夹和 .md 文件结构
+- [x] 目录树支持展开/折叠文件夹
+- [x] 右键菜单或按钮可新建笔记、重命名、删除
+- [x] 搜索栏 Cmd/Ctrl+K 可唤起
+- [x] 搜索输入关键词后返回匹配结果列表
+- [x] 搜索结果点击可打开对应笔记
+- [x] 暗色/亮色主题切换全局生效
+- [x] 主题选择在刷新后保持
+- [x] `pnpm tauri build` 打包成功（Linux）
+- [x] 打包后应用可正常启动并包含所有核心功能

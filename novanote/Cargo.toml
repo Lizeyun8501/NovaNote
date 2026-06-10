@@ -1,0 +1,3 @@
+[workspace]
+members = ["src-tauri", "crates/novanote-core", "crates/novanote-tauri", "crates/novanote-sync-server", "crates/novanote-plugin-runtime", "crates/novanote-plugin-sdk"]
+resolver = "2"
