@@ -326,8 +326,25 @@ impl PluginHost {
                     .map_err(|e| wasmtime::Error::new(e))?;
 
                 let path_str = String::from_utf8_lossy(&path_buf).to_string();
+                if path_str.is_empty() || path_str.starts_with('/') || path_str.contains("..") || path_str.contains('\\') {
+                    return Ok(-1);
+                }
                 let notes_dir = &caller.data().notes_dir;
                 let full_path = notes_dir.join(&path_str);
+
+                // Verify the resolved path is within notes_dir
+                match full_path.canonicalize() {
+                    Ok(canonical) => {
+                        let canonical_root = match notes_dir.canonicalize() {
+                            Ok(r) => r,
+                            Err(_) => return Ok(-1),
+                        };
+                        if !canonical.starts_with(&canonical_root) {
+                            return Ok(-1);
+                        }
+                    }
+                    Err(_) => return Ok(-1),
+                }
 
                 let content = match std::fs::read_to_string(&full_path) {
                     Ok(c) => c,
@@ -372,9 +389,31 @@ impl PluginHost {
                     .map_err(|e| wasmtime::Error::new(e))?;
 
                 let path_str = String::from_utf8_lossy(&path_buf).to_string();
+                if path_str.is_empty() || path_str.starts_with('/') || path_str.contains("..") || path_str.contains('\\') {
+                    return Ok(-1);
+                }
                 let content_str = String::from_utf8_lossy(&content_buf).to_string();
                 let notes_dir = &caller.data().notes_dir;
                 let full_path = notes_dir.join(&path_str);
+
+                // Verify the resolved path is within notes_dir (parent must exist for new files)
+                if let Some(parent) = full_path.parent() {
+                    match parent.canonicalize() {
+                        Ok(canonical_parent) => {
+                            match notes_dir.canonicalize() {
+                                Ok(canonical_root) => {
+                                    if !canonical_parent.starts_with(&canonical_root) {
+                                        return Ok(-1);
+                                    }
+                                }
+                                Err(_) => return Ok(-1),
+                            }
+                        }
+                        Err(_) => return Ok(-1),
+                    }
+                } else {
+                    return Ok(-1);
+                }
 
                 match std::fs::write(&full_path, &content_str) {
                     Ok(()) => Ok(content_len as i32),

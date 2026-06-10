@@ -13,9 +13,53 @@ use novanote_core::FileChangeEvent;
 use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus, PluginEvent};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::State;
+
+/// Resolve a relative path within the vault root, rejecting path traversal attempts.
+/// Returns the canonicalized full path on success, or an error string if the path
+/// escapes the vault root directory.
+/// Use this for read operations where the file must already exist.
+fn resolve_vault_path(vault_root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    if relative_path.is_empty() {
+        return Err("relative path must not be empty".into());
+    }
+    if relative_path.starts_with('/') || relative_path.contains("..") || relative_path.contains('\\') {
+        return Err(format!("invalid relative path: '{}'", relative_path));
+    }
+    let full = vault_root.join(relative_path);
+    let canonical = full.canonicalize().map_err(|e| format!("invalid path: {}", e))?;
+    let canonical_root = vault_root.canonicalize().map_err(|e| format!("vault root error: {}", e))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "path traversal denied: '{}' is outside the vault",
+            relative_path
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Validate that a relative path is safe (no traversal) and return the full path.
+/// Use this for write/create operations where the file may not exist yet.
+fn safe_vault_path(vault_root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    if relative_path.is_empty() {
+        return Err("relative path must not be empty".into());
+    }
+    if relative_path.starts_with('/') || relative_path.contains("..") || relative_path.contains('\\') {
+        return Err(format!("invalid relative path: '{}'", relative_path));
+    }
+    let full = vault_root.join(relative_path);
+    // Verify parent directory is within the vault
+    if let Some(parent) = full.parent() {
+        let canonical_parent = parent.canonicalize().map_err(|e| format!("invalid path: {}", e))?;
+        let canonical_root = vault_root.canonicalize().map_err(|e| format!("vault root error: {}", e))?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            return Err(format!("path traversal denied: '{}'", relative_path));
+        }
+    }
+    Ok(full)
+}
 
 pub struct AppState {
     pub vault: Mutex<Option<Vault>>,
@@ -125,7 +169,7 @@ fn vault_read_note(state: State<AppState>, relative_path: String) -> Result<Stri
     let result = {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
         std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
     };
     // Dispatch NoteOpened event to plugins
@@ -140,7 +184,7 @@ fn vault_write_note(state: State<AppState>, relative_path: String, content: Stri
     {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = safe_vault_path(&vault.root_path, &relative_path)?;
         std::fs::write(&full_path, &content).map_err(|e| e.to_string())?;
         // Re-index the file
         vault.index_file(&full_path).map_err(|e| e.to_string())?;
@@ -155,8 +199,8 @@ fn vault_rename_note(state: State<AppState>, old_relative_path: String, new_rela
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
-    let old_path = vault.root_path.join(&old_relative_path);
-    let new_path = vault.root_path.join(&new_relative_path);
+    let old_path = resolve_vault_path(&vault.root_path, &old_relative_path)?;
+    let new_path = safe_vault_path(&vault.root_path, &new_relative_path)?;
 
     std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
 
@@ -174,7 +218,7 @@ fn vault_delete_note(state: State<AppState>, relative_path: String) -> Result<()
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
         std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
         vault.remove_file(&relative_path).map_err(|e| e.to_string())?;
     }
@@ -201,6 +245,7 @@ fn vault_get_notes_by_tag(state: State<AppState>, tag: String) -> Result<Vec<Not
 fn vault_get_backlinks(state: State<AppState>, relative_path: String) -> Result<Vec<NoteMeta>, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     vault.get_backlinks(&relative_path).map_err(|e| e.to_string())
 }
 
@@ -208,6 +253,7 @@ fn vault_get_backlinks(state: State<AppState>, relative_path: String) -> Result<
 fn vault_get_backlinks_with_blocks(state: State<AppState>, relative_path: String) -> Result<Vec<(NoteMeta, String, String)>, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     vault.get_backlinks_with_blocks(&relative_path).map_err(|e| e.to_string())
 }
 
@@ -254,6 +300,7 @@ fn vault_get_graph_data(state: State<AppState>) -> Result<GraphData, String> {
 fn vault_export_html(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     vault.export_note_as_html(&relative_path, &output_path).map_err(|e| e.to_string())
 }
 
@@ -261,6 +308,7 @@ fn vault_export_html(state: State<AppState>, relative_path: String, output_path:
 fn vault_export_markdown(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
 }
@@ -269,6 +317,7 @@ fn vault_export_markdown(state: State<AppState>, relative_path: String, output_p
 fn export_note_md(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
 }
@@ -277,6 +326,7 @@ fn export_note_md(state: State<AppState>, relative_path: String, output_path: St
 fn export_note_html(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Html).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
 }
@@ -285,6 +335,7 @@ fn export_note_html(state: State<AppState>, relative_path: String, output_path: 
 fn export_note_pdf(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &relative_path)?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Pdf).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
 }
@@ -307,7 +358,7 @@ fn vault_get_template_content(state: State<AppState>, name: String) -> Result<St
 fn vault_read_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
+    let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
     std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
 }
 
@@ -315,7 +366,7 @@ fn vault_read_canvas(state: State<AppState>, relative_path: String) -> Result<St
 fn vault_write_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
+    let full_path = safe_vault_path(&vault.root_path, &relative_path)?;
     std::fs::write(&full_path, data).map_err(|e| e.to_string())
 }
 
@@ -323,7 +374,7 @@ fn vault_write_canvas(state: State<AppState>, relative_path: String, data: Strin
 fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
+    let full_path = safe_vault_path(&vault.root_path, &relative_path)?;
     std::fs::write(&full_path, data).map_err(|e| e.to_string())
 }
 
@@ -331,7 +382,7 @@ fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> R
 fn load_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
+    let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
     std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
 }
 
@@ -412,7 +463,7 @@ async fn ai_generate_tags(state: State<'_, AppState>, base_url: String, model: S
     let content = {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
         std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
     };
 
@@ -429,7 +480,7 @@ async fn ai_summarize(state: State<'_, AppState>, base_url: String, model: Strin
     let content = {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
         std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
     };
 
@@ -534,12 +585,12 @@ async fn ai_index_embedding(
     model: String,
     relative_path: String,
 ) -> Result<(), String> {
-    let (content, vault_exists) = {
+    let (content, vault_exists, path_clone) = {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        let full_path = vault.root_path.join(&relative_path);
+        let full_path = resolve_vault_path(&vault.root_path, &relative_path)?;
         let content = std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
-        (content, true)
+        (content, true, relative_path.clone())
     };
     
     let embedding = novanote_core::generate_embedding(&base_url, &model, &content).await
@@ -548,7 +599,7 @@ async fn ai_index_embedding(
     if vault_exists {
         let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-        vault.store_embedding(&relative_path, &embedding, &model).map_err(|e| e.to_string())?;
+        vault.store_embedding(&path_clone, &embedding, &model).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -768,6 +819,7 @@ fn git_log(state: State<AppState>, max_count: Option<usize>) -> Result<Vec<novan
 fn git_diff(state: State<AppState>, path: String) -> Result<String, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let _validated = resolve_vault_path(&vault.root_path, &path)?;
     let git = GitIntegration::new(&vault.root_path);
     git.diff(&path).map_err(|e| e.to_string())
 }
