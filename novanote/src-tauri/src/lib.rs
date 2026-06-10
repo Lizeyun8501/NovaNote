@@ -3,13 +3,14 @@ use novanote_core::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMod
 use novanote_core::{OcrConfig, OcrResult};
 use novanote_core::{parse_eml_file, email_to_markdown};
 use novanote_core::VectorSearchResult;
+use novanote_core::{RagConfig, RagAnswer};
 use novanote_core::SearchHit;
 use novanote_core::GitIntegration;
 use novanote_core::AuditEntry;
 use novanote_core::TranscriptionResult;
 use novanote_core::ExportFormat;
 use novanote_core::FileChangeEvent;
-use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
+use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus, PluginEvent};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -19,6 +20,16 @@ use tauri::State;
 pub struct AppState {
     pub vault: Mutex<Option<Vault>>,
     pub plugin_host: Mutex<PluginHost>,
+}
+
+/// Dispatch a plugin event to all loaded plugins.
+fn dispatch_plugin_event(state: &AppState, event: PluginEvent) {
+    if let Ok(mut host) = state.plugin_host.lock() {
+        let plugin_ids: Vec<String> = host.list_plugins().iter().map(|p| p.id.clone()).collect();
+        for id in plugin_ids {
+            let _ = host.call_plugin(&id, &event);
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -110,20 +121,32 @@ fn vault_scan(state: State<AppState>) -> Result<Vec<NoteMeta>, String> {
 
 #[tauri::command]
 fn vault_read_note(state: State<AppState>, relative_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
-    std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
+    let path_clone = relative_path.clone();
+    let result = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let full_path = vault.root_path.join(&relative_path);
+        std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
+    };
+    // Dispatch NoteOpened event to plugins
+    dispatch_plugin_event(&state, PluginEvent::NoteOpened { path: path_clone });
+    Ok(result)
 }
 
 #[tauri::command]
 fn vault_write_note(state: State<AppState>, relative_path: String, content: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
-    std::fs::write(&full_path, &content).map_err(|e| e.to_string())?;
-    // Re-index the file
-    vault.index_file(&full_path).map_err(|e| e.to_string())?;
+    let path_clone = relative_path.clone();
+    let content_clone = content.clone();
+    {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        let full_path = vault.root_path.join(&relative_path);
+        std::fs::write(&full_path, &content).map_err(|e| e.to_string())?;
+        // Re-index the file
+        vault.index_file(&full_path).map_err(|e| e.to_string())?;
+    }
+    // Dispatch NoteSaved event to plugins
+    dispatch_plugin_event(&state, PluginEvent::NoteSaved { path: path_clone, content: content_clone });
     Ok(())
 }
 
@@ -146,13 +169,17 @@ fn vault_rename_note(state: State<AppState>, old_relative_path: String, new_rela
 
 #[tauri::command]
 fn vault_delete_note(state: State<AppState>, relative_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let path_clone = relative_path.clone();
+    {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
-    let full_path = vault.root_path.join(&relative_path);
-    std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
-    vault.remove_file(&relative_path).map_err(|e| e.to_string())?;
-
+        let full_path = vault.root_path.join(&relative_path);
+        std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
+        vault.remove_file(&relative_path).map_err(|e| e.to_string())?;
+    }
+    // Dispatch NoteDeleted event to plugins
+    dispatch_plugin_event(&state, PluginEvent::NoteDeleted { path: path_clone });
     Ok(())
 }
 

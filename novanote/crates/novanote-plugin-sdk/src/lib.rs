@@ -35,6 +35,12 @@ extern "C" {
         result_ptr: *mut u8,
         result_max_len: u32,
     ) -> i32;
+    pub fn host_set_note_content(
+        path_ptr: *const u8,
+        path_len: u32,
+        content_ptr: *const u8,
+        content_len: u32,
+    ) -> i32;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +98,20 @@ pub fn read_note(path: &str) -> Option<String> {
         buf.set_len(written as usize);
     }
     Some(String::from_utf8_lossy(&buf).to_string())
+}
+
+/// Write content to a note file through the host runtime.
+/// Returns true on success, false on failure.
+pub fn write_note(path: &str, content: &str) -> bool {
+    let written = unsafe {
+        host_set_note_content(
+            path.as_ptr(),
+            path.len() as u32,
+            content.as_ptr(),
+            content.len() as u32,
+        )
+    };
+    written > 0
 }
 
 /// Build a serialized `PluginEvent::Custom` JSON string suitable for
