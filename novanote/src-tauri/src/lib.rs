@@ -589,8 +589,8 @@ async fn ai_rag_query(
     model: String,
     top_k: Option<usize>,
     max_context_chars: Option<usize>,
-) -> Result<RagAnswer, String> {
-    let config = RagConfig {
+) -> Result<novanote_core::RagAnswer, String> {
+    let config = novanote_core::RagConfig {
         ollama_config: OllamaConfig {
             base_url,
             model,
@@ -600,9 +600,35 @@ async fn ai_rag_query(
         max_context_chars: max_context_chars.unwrap_or(4000),
     };
 
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    vault.rag_search(&query, &config).await.map_err(|e| e.to_string())
+    // Generate embedding (async, no lock needed)
+    let query_embedding = novanote_core::generate_embedding(
+        &config.ollama_config.base_url,
+        &config.ollama_config.model,
+        &query,
+    ).await.map_err(|e| e.to_string())?;
+
+    // Search with embedding (sync, needs vault lock briefly)
+    let search_results = {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+        vault.semantic_search_with_embedding(&query_embedding).map_err(|e| e.to_string())?
+    }; // vault_guard dropped here
+
+    // Build context from search results (needs vault lock briefly)
+    let mut note_contents = Vec::new();
+    {
+        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        if let Some(vault) = vault_guard.as_ref() {
+            for result in &search_results {
+                if let Ok(content) = vault.read_note(&result.relative_path) {
+                    let snippet: String = content.chars().take(config.max_context_chars / config.top_k.max(1)).collect();
+                    note_contents.push((result.relative_path.clone(), snippet, result.similarity));
+                }
+            }
+        }
+    } // vault_guard dropped here
+
+    novanote_core::rag_query(&config, &query, note_contents).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
