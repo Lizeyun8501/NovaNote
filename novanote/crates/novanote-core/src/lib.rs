@@ -43,6 +43,8 @@ pub struct VaultConfig {
     #[serde(default)]
     pub encryption_key_encrypted: Option<String>,  // Encrypted master key (base64), stored encrypted with user password
     #[serde(default)]
+    pub sync_key_salt: Option<String>,  // Base64-encoded Argon2 salt for sync key derivation (persisted across sessions)
+    #[serde(default)]
     pub settings: VaultSettings,
 }
 

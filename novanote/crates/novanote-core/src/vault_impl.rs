@@ -88,12 +88,24 @@ impl Vault {
         let tantivy_path = root.join(".vault").join("tantivy_idx");
         let tantivy_index = TantivyIndex::open(&tantivy_path).ok();
 
+        // Restore sync key salt from persisted config
+        let sync_engine = SyncEngine::default();
+        if let Some(ref salt_b64) = config.sync_key_salt {
+            use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+            if let Ok(salt_bytes) = B64.decode(salt_b64) {
+                let mut salt = [0u8; 32];
+                let len = 32.min(salt_bytes.len());
+                salt[..len].copy_from_slice(&salt_bytes[..len]);
+                sync_engine.set_key_salt(salt);
+            }
+        }
+
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
             conn: Mutex::new(conn),
             ydoc_holder: YDocHolder::new(),
-            sync_engine: SyncEngine::default(),
+            sync_engine,
             crdt_store,
             file_watcher: Mutex::new(None),
             event_rx: Mutex::new(None),
@@ -259,6 +271,25 @@ impl Vault {
     }
 
     pub fn ydoc_holder(&self) -> &YDocHolder { &self.ydoc_holder }
+
+    /// Save the current VaultConfig back to config.json on disk
+    pub fn save_config(&self) -> Result<(), VaultError> {
+        let config_path = self.root_path.join(".vault").join("config.json");
+        let config_json = serde_json::to_string_pretty(&self.config)?;
+        fs::write(&config_path, config_json)?;
+        Ok(())
+    }
+
+    /// Persist the sync key salt from SyncEngine into VaultConfig and write to disk.
+    /// Must be called after `set_master_password` to ensure the salt survives app restarts.
+    pub fn persist_sync_salt(&mut self) -> Result<(), VaultError> {
+        if let Some(salt) = self.sync_engine.get_key_salt() {
+            use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+            self.config.sync_key_salt = Some(B64.encode(salt));
+            self.save_config()?;
+        }
+        Ok(())
+    }
 
     pub fn ydoc_to_markdown(&self, note_id: &str) -> Option<String> {
         self.ydoc_holder.to_markdown(note_id)

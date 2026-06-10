@@ -45,6 +45,8 @@ struct SharedState {
 pub struct SyncEngine {
     config: Arc<Mutex<SyncConfig>>,
     master_key: Arc<Mutex<Option<[u8; 32]>>>,
+    /// Persisted salt for key derivation — must be reused across sessions
+    key_salt: Arc<Mutex<Option<[u8; 32]>>>,
     offline_queue: Arc<Mutex<VecDeque<PendingUpdate>>>,
     shared: Arc<Mutex<SharedState>>,
     /// Channel to send commands to the WebSocket background task
@@ -68,6 +70,7 @@ impl SyncEngine {
                 jwt_token: String::new(),
             })),
             master_key: Arc::new(Mutex::new(None)),
+            key_salt: Arc::new(Mutex::new(None)),
             offline_queue: Arc::new(Mutex::new(VecDeque::new())),
             shared: Arc::new(Mutex::new(SharedState {
                 connected: false,
@@ -108,25 +111,46 @@ impl SyncEngine {
         self.config.lock().unwrap().enabled
     }
 
-    /// Set master password and derive encryption key
+    /// Set master password and derive encryption key. Stores the salt for later unlock.
     pub fn set_master_password(&self, password: &str) {
-        let (key, _salt) = derive_key(password, None);
+        let (key, salt) = derive_key(password, None);
         let mut mk = self.master_key.lock().unwrap();
         *mk = Some(*key);
+        let mut ks = self.key_salt.lock().unwrap();
+        *ks = Some(salt);
         self.config.lock().unwrap().master_password_set = true;
     }
 
-    /// Unlock with master password (for reconnecting)
+    /// Unlock with master password using the stored salt.
+    /// Returns true if a salt exists and key derivation succeeds.
+    /// Returns false if no password was previously set (no salt stored).
     pub fn unlock(&self, password: &str) -> bool {
-        let (key, _salt) = derive_key(password, None);
-        let mut mk = self.master_key.lock().unwrap();
-        *mk = Some(*key);
-        true
+        let salt = self.key_salt.lock().unwrap();
+        match *salt {
+            Some(s) => {
+                let (key, _) = derive_key(password, Some(&s));
+                let mut mk = self.master_key.lock().unwrap();
+                *mk = Some(*key);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Check if unlocked
     pub fn is_unlocked(&self) -> bool {
         self.master_key.lock().unwrap().is_some()
+    }
+
+    /// Get the stored key salt (for persistence across sessions)
+    pub fn get_key_salt(&self) -> Option<[u8; 32]> {
+        *self.key_salt.lock().unwrap()
+    }
+
+    /// Restore the key salt from a previous session (must be called before unlock)
+    pub fn set_key_salt(&self, salt: [u8; 32]) {
+        let mut ks = self.key_salt.lock().unwrap();
+        *ks = Some(salt);
     }
 
     /// Get the current master key
@@ -253,12 +277,64 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Flush offline queue when back online
+    /// Flush offline queue when back online — actually sends each queued update to the server
     pub async fn flush_offline_queue(&self) -> Result<usize, String> {
-        let mut queue = self.offline_queue.lock().unwrap();
-        let count = queue.len();
-        queue.clear();
-        Ok(count)
+        let config = self.config.lock().unwrap().clone();
+        if config.server_url.is_empty() {
+            return Ok(0);
+        }
+
+        // Drain the queue, keeping items to retry on failure
+        let items: Vec<PendingUpdate> = {
+            let mut queue = self.offline_queue.lock().unwrap();
+            queue.drain(..).collect()
+        };
+
+        let count = items.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let client = reqwest::Client::new();
+        let mut failed = VecDeque::new();
+        let mut sent = 0usize;
+
+        for item in &items {
+            let result = client
+                .post(format!("{}/sync/push", config.server_url))
+                .json(&serde_json::json!({
+                    "vault_id": config.vault_id,
+                    "note_id": item.note_id,
+                    "encrypted_blob": format!("{}:{}", item.nonce, item.encrypted_blob),
+                }))
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    sent += 1;
+                }
+                _ => {
+                    // Re-queue failed items for next attempt
+                    failed.push_back(item.clone());
+                }
+            }
+        }
+
+        // Put failed items back at the front of the queue
+        if !failed.is_empty() {
+            let mut queue = self.offline_queue.lock().unwrap();
+            while let Some(item) = failed.pop_back() {
+                queue.push_front(item);
+            }
+        }
+
+        if sent > 0 {
+            let mut shared = self.shared.lock().unwrap();
+            shared.last_sync_timestamp = chrono::Utc::now().timestamp();
+        }
+
+        Ok(sent)
     }
 
     /// Get sync status
@@ -453,9 +529,23 @@ impl SyncEngine {
                     s.ws_connected || s.connected
                 };
                 if is_connected {
-                    // In production, send each queued update to the server
-                    // For now, just clear it
-                    offline_queue.lock().unwrap().clear();
+                    // Send each queued update via HTTP; re-queue on failure
+                    let queue_items: Vec<PendingUpdate> = offline_queue.lock().unwrap().drain(..).collect();
+                    for item in &queue_items {
+                        let client = reqwest::Client::new();
+                        let result = client
+                            .post(format!("{}/sync/push", server_url))
+                            .json(&serde_json::json!({
+                                "vault_id": vault_id,
+                                "note_id": item.note_id,
+                                "encrypted_blob": format!("{}:{}", item.nonce, item.encrypted_blob),
+                            }))
+                            .send()
+                            .await;
+                        if result.is_err() || result.unwrap().status().is_success() == false {
+                            offline_queue.lock().unwrap().push_back(item.clone());
+                        }
+                    }
                 }
             }
         });
@@ -561,7 +651,27 @@ async fn run_ws_loop(
                 }
 
                 // Flush offline queue now that we're connected
-                offline_queue.lock().unwrap().clear();
+                {
+                    let queue_items: Vec<PendingUpdate> = offline_queue.lock().unwrap().drain(..).collect();
+                    for item in &queue_items {
+                        let msg = SyncMessage {
+                            msg_type: "update".to_string(),
+                            auth: None,
+                            auth_ok: None,
+                            step1: None,
+                            step2: Some(crate::protobuf::SyncStep2 {
+                                doc_id: item.note_id.clone(),
+                                updates: vec![format!("{}:{}", item.nonce, item.encrypted_blob).into_bytes()],
+                            }),
+                            awareness: None,
+                        };
+                        let msg_bytes = msg.encode_prefixed();
+                        if write.send(Message::Binary(msg_bytes.into())).await.is_err() {
+                            // Re-queue on failure
+                            offline_queue.lock().unwrap().push_back(item.clone());
+                        }
+                    }
+                }
 
                 // Main message loop
                 loop {

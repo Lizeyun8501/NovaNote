@@ -366,10 +366,18 @@ fn sync_get_status(state: State<AppState>) -> Result<SyncStatusResponse, String>
 
 #[tauri::command]
 fn sync_set_master_password(state: State<AppState>, password: String) -> Result<(), String> {
+    let mut vault_guard = state.vault.lock();
+    let vault = vault_guard.as_mut().ok_or("No vault opened")?;
+    vault.sync_engine.set_master_password(&password);
+    vault.persist_sync_salt().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_unlock(state: State<AppState>, password: String) -> Result<bool, String> {
     let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    vault.sync_engine.set_master_password(&password);
-    Ok(())
+    Ok(vault.sync_engine.unlock(&password))
 }
 
 #[tauri::command]
@@ -899,6 +907,7 @@ pub fn run() {
             sync_disable,
             sync_get_status,
             sync_set_master_password,
+            sync_unlock,
             ai_check_ollama,
             ai_generate_tags,
             ai_summarize,
