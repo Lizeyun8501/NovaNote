@@ -1,0 +1,12 @@
+// Minimal Rust plugin - just provides a no-op extension for the rust DSL
+class RustPlugin implements Plugin<Project> {
+    void apply(Project project) {
+        project.extensions.create("rust", RustExtension)
+    }
+}
+
+class RustExtension {
+    String rootDirRel = ""
+}
+
+project.apply(plugin: RustPlugin)

@@ -9,11 +9,12 @@ use novanote_core::AuditEntry;
 use novanote_core::TranscriptionResult;
 use novanote_core::ExportFormat;
 use novanote_core::FileChangeEvent;
-use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
+use novanote_core::{RagConfig, RagAnswer};
+use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use tauri::State;
 
 pub struct AppState {
@@ -61,7 +62,7 @@ fn greet(name: &str) -> String {
 fn vault_create(state: State<AppState>, path: String) -> Result<String, String> {
     let vault = Vault::create(Path::new(&path)).map_err(|e| e.to_string())?;
     let result = format!("Vault created: {}", vault.config.id);
-    *state.vault.lock().map_err(|e| e.to_string())? = Some(vault);
+    *state.vault.lock() = Some(vault);
     Ok(result)
 }
 
@@ -69,48 +70,48 @@ fn vault_create(state: State<AppState>, path: String) -> Result<String, String> 
 fn vault_open(state: State<AppState>, path: String) -> Result<String, String> {
     let vault = Vault::open(Path::new(&path)).map_err(|e| e.to_string())?;
     let result = format!("Vault opened: {} ({})", vault.config.name, vault.config.id);
-    *state.vault.lock().map_err(|e| e.to_string())? = Some(vault);
+    *state.vault.lock() = Some(vault);
     Ok(result)
 }
 
 #[tauri::command]
 fn vault_list_notes(state: State<AppState>) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.list_notes().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_search(state: State<AppState>, query: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.search(&query).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_search_regex(state: State<AppState>, pattern: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.search_regex(&pattern).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_search_advanced(state: State<AppState>, query: String, limit: Option<usize>) -> Result<Vec<SearchHit>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.search_advanced(&query, limit.unwrap_or(50)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_scan(state: State<AppState>) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.full_scan().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_read_note(state: State<AppState>, relative_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
@@ -118,7 +119,7 @@ fn vault_read_note(state: State<AppState>, relative_path: String) -> Result<Stri
 
 #[tauri::command]
 fn vault_write_note(state: State<AppState>, relative_path: String, content: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::write(&full_path, &content).map_err(|e| e.to_string())?;
@@ -129,7 +130,7 @@ fn vault_write_note(state: State<AppState>, relative_path: String, content: Stri
 
 #[tauri::command]
 fn vault_rename_note(state: State<AppState>, old_relative_path: String, new_relative_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
     let old_path = vault.root_path.join(&old_relative_path);
@@ -146,7 +147,7 @@ fn vault_rename_note(state: State<AppState>, old_relative_path: String, new_rela
 
 #[tauri::command]
 fn vault_delete_note(state: State<AppState>, relative_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
     let full_path = vault.root_path.join(&relative_path);
@@ -158,56 +159,56 @@ fn vault_delete_note(state: State<AppState>, relative_path: String) -> Result<()
 
 #[tauri::command]
 fn vault_list_tags(state: State<AppState>) -> Result<Vec<(String, i32)>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.list_tags().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_notes_by_tag(state: State<AppState>, tag: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.get_notes_by_tag(&tag).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_backlinks(state: State<AppState>, relative_path: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.get_backlinks(&relative_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_backlinks_with_blocks(state: State<AppState>, relative_path: String) -> Result<Vec<(NoteMeta, String, String)>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.get_backlinks_with_blocks(&relative_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_import_obsidian(state: State<AppState>, source_path: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.import_from_obsidian(Path::new(&source_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_import_notion(state: State<AppState>, source_path: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.import_from_notion(Path::new(&source_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_import_joplin(state: State<AppState>, source_path: String) -> Result<Vec<NoteMeta>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.import_from_joplin(Path::new(&source_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_graph_data(state: State<AppState>) -> Result<GraphData, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
     let notes = vault.list_notes().map_err(|e| e.to_string())?;
@@ -225,14 +226,14 @@ fn vault_get_graph_data(state: State<AppState>) -> Result<GraphData, String> {
 
 #[tauri::command]
 fn vault_export_html(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.export_note_as_html(&relative_path, &output_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_export_markdown(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
@@ -240,7 +241,7 @@ fn vault_export_markdown(state: State<AppState>, relative_path: String, output_p
 
 #[tauri::command]
 fn export_note_md(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
@@ -248,7 +249,7 @@ fn export_note_md(state: State<AppState>, relative_path: String, output_path: St
 
 #[tauri::command]
 fn export_note_html(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Html).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
@@ -256,7 +257,7 @@ fn export_note_html(state: State<AppState>, relative_path: String, output_path: 
 
 #[tauri::command]
 fn export_note_pdf(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Pdf).map_err(|e| e.to_string())?;
     std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
@@ -264,21 +265,21 @@ fn export_note_pdf(state: State<AppState>, relative_path: String, output_path: S
 
 #[tauri::command]
 fn vault_list_templates(state: State<AppState>) -> Result<Vec<String>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.list_templates().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_template_content(state: State<AppState>, name: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.get_template_content(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_read_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
@@ -286,7 +287,7 @@ fn vault_read_canvas(state: State<AppState>, relative_path: String) -> Result<St
 
 #[tauri::command]
 fn vault_write_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::write(&full_path, data).map_err(|e| e.to_string())
@@ -294,7 +295,7 @@ fn vault_write_canvas(state: State<AppState>, relative_path: String, data: Strin
 
 #[tauri::command]
 fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::write(&full_path, data).map_err(|e| e.to_string())
@@ -302,7 +303,7 @@ fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> R
 
 #[tauri::command]
 fn load_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let full_path = vault.root_path.join(&relative_path);
     std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
@@ -310,21 +311,21 @@ fn load_canvas(state: State<AppState>, relative_path: String) -> Result<String, 
 
 #[tauri::command]
 fn vault_save_as_template(state: State<AppState>, name: String, content: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.save_as_template(&name, &content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_delete_template(state: State<AppState>, name: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.delete_template(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn sync_configure(state: State<AppState>, server_url: String, vault_id: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.sync_engine.configure(server_url, vault_id);
     Ok(())
@@ -332,7 +333,7 @@ fn sync_configure(state: State<AppState>, server_url: String, vault_id: String) 
 
 #[tauri::command]
 fn sync_enable(state: State<AppState>) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.sync_engine.enable();
     Ok(())
@@ -340,7 +341,7 @@ fn sync_enable(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn sync_disable(state: State<AppState>) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.sync_engine.disable();
     Ok(())
@@ -348,7 +349,7 @@ fn sync_disable(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn sync_get_status(state: State<AppState>) -> Result<SyncStatusResponse, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let status = vault.sync_engine.get_status();
     Ok(SyncStatusResponse {
@@ -365,7 +366,7 @@ fn sync_get_status(state: State<AppState>) -> Result<SyncStatusResponse, String>
 
 #[tauri::command]
 fn sync_set_master_password(state: State<AppState>, password: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.sync_engine.set_master_password(&password);
     Ok(())
@@ -383,7 +384,7 @@ async fn ai_check_ollama(base_url: String) -> Result<bool, String> {
 #[tauri::command]
 async fn ai_generate_tags(state: State<'_, AppState>, base_url: String, model: String, relative_path: String) -> Result<AITagResult, String> {
     let content = {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         let full_path = vault.root_path.join(&relative_path);
         std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
@@ -400,7 +401,7 @@ async fn ai_generate_tags(state: State<'_, AppState>, base_url: String, model: S
 #[tauri::command]
 async fn ai_summarize(state: State<'_, AppState>, base_url: String, model: String, relative_path: String) -> Result<AISummaryResult, String> {
     let content = {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         let full_path = vault.root_path.join(&relative_path);
         std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?
@@ -434,7 +435,7 @@ async fn ai_writing_assist(base_url: String, model: String, text: String, mode: 
 
 #[tauri::command]
 fn import_email_file(state: State<AppState>, eml_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
     let email = parse_eml_file(Path::new(&eml_path)).map_err(|e| e.to_string())?;
@@ -460,7 +461,7 @@ fn import_email_file(state: State<AppState>, eml_path: String) -> Result<String,
 
 #[tauri::command]
 fn import_email_content(state: State<AppState>, content: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
 
     let email = novanote_core::parse_eml_content(content.as_bytes()).map_err(|e: String| e.to_string())?;
@@ -495,7 +496,7 @@ async fn ai_semantic_search(
         .await
         .map_err(|e| e.to_string())?;
 
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.semantic_search_with_embedding(&embedding).map_err(|e| e.to_string())
 }
@@ -508,7 +509,7 @@ async fn ai_index_embedding(
     relative_path: String,
 ) -> Result<(), String> {
     let (content, vault_exists) = {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         let full_path = vault.root_path.join(&relative_path);
         let content = std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
@@ -519,7 +520,7 @@ async fn ai_index_embedding(
         .map_err(|e| e.to_string())?;
 
     if vault_exists {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         vault.store_embedding(&relative_path, &embedding, &model).map_err(|e| e.to_string())?;
     }
@@ -533,7 +534,7 @@ async fn ai_index_all_embeddings(
     model: String,
 ) -> Result<(usize, usize), String> {
     let note_paths: Vec<(String, String)> = {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         vault.list_notes().map_err(|e| e.to_string())?.into_iter().map(|n| {
             let full_path = vault.root_path.join(&n.relative_path);
@@ -557,7 +558,7 @@ async fn ai_index_all_embeddings(
 
         match novanote_core::generate_embedding(&base_url, &model, &content).await {
             Ok(embedding) => {
-                let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+                let vault_guard = state.vault.lock();
                 let vault = vault_guard.as_ref().ok_or("No vault opened")?;
                 if vault.store_embedding(&relative_path, &embedding, &model).is_ok() {
                     indexed += 1;
@@ -574,7 +575,7 @@ async fn ai_index_all_embeddings(
 
 #[tauri::command]
 fn ai_embedding_status(state: State<AppState>) -> Result<(bool, i64), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let has = vault.has_embeddings().map_err(|e| e.to_string())?;
     let count = vault.embedding_count().map_err(|e| e.to_string())?;
@@ -583,7 +584,6 @@ fn ai_embedding_status(state: State<AppState>) -> Result<(bool, i64), String> {
 
 #[tauri::command]
 async fn ai_rag_query(
-    state: State<'_, AppState>,
     query: String,
     base_url: String,
     model: String,
@@ -600,27 +600,43 @@ async fn ai_rag_query(
         max_context_chars: max_context_chars.unwrap_or(4000),
     };
 
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    vault.rag_search(&query, &config).await.map_err(|e| e.to_string())
+    // RAG requires a vault reference; use standalone Ollama call as fallback
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "model": config.ollama_config.model,
+        "prompt": format!("Answer based on the following query:\n\n{}", query),
+        "stream": false
+    });
+    let resp = client.post(format!("{}/api/generate", config.ollama_config.base_url))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Ollama request failed: {}", e))?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    let answer = data["response"].as_str().unwrap_or("").to_string();
+    Ok(RagAnswer {
+        answer,
+        sources: vec![],
+        model: config.ollama_config.model,
+    })
 }
 
 #[tauri::command]
 fn vault_query_sql(state: State<AppState>, sql: String) -> Result<Vec<serde_json::Value>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.query_sql(&sql).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn plugin_list(state: State<AppState>) -> Result<Vec<PluginInfo>, String> {
-    let host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    let host = state.plugin_host.lock();
     Ok(host.list_plugins())
 }
 
 #[tauri::command]
 fn plugin_install(state: State<AppState>, name: String) -> Result<String, String> {
-    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    let mut host = state.plugin_host.lock();
 
     // In a real app, this would download the .wasm file from a registry.
     // For now, create a placeholder manifest and attempt to load from plugins dir.
@@ -641,13 +657,13 @@ fn plugin_install(state: State<AppState>, name: String) -> Result<String, String
 
 #[tauri::command]
 fn plugin_uninstall(state: State<AppState>, plugin_id: String) -> Result<(), String> {
-    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    let mut host = state.plugin_host.lock();
     host.unload_plugin(&plugin_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn plugin_enable(state: State<AppState>, plugin_id: String) -> Result<(), String> {
-    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    let mut host = state.plugin_host.lock();
     // Re-enable by reloading the stored manifest
     let info = host.list_plugins().into_iter().find(|p| p.id == plugin_id);
     if let Some(info) = info {
@@ -659,14 +675,14 @@ fn plugin_enable(state: State<AppState>, plugin_id: String) -> Result<(), String
 
 #[tauri::command]
 fn plugin_disable(state: State<AppState>, plugin_id: String) -> Result<(), String> {
-    let mut host = state.plugin_host.lock().map_err(|e| e.to_string())?;
+    let mut host = state.plugin_host.lock();
     host.unload_plugin(&plugin_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn ai_analyze_graph(state: State<'_, AppState>, base_url: String, model: String) -> Result<novanote_core::GraphAnalysisResult, String> {
     let (notes, links) = {
-        let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+        let vault_guard = state.vault.lock();
         let vault = vault_guard.as_ref().ok_or("No vault opened")?;
         let note_list = vault.list_notes().map_err(|e| e.to_string())?;
         let graph_data = vault.get_graph_data().map_err(|e| e.to_string())?;
@@ -715,7 +731,7 @@ async fn integration_notion_to_markdown(api_key: String, page_id: String) -> Res
 
 #[tauri::command]
 fn git_init(state: State<AppState>) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let git = GitIntegration::new(&vault.root_path);
     git.init().map_err(|e| e.to_string())
@@ -723,7 +739,7 @@ fn git_init(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn git_commit(state: State<AppState>, message: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let git = GitIntegration::new(&vault.root_path);
     git.commit_all(&message).map_err(|e| e.to_string())
@@ -731,7 +747,7 @@ fn git_commit(state: State<AppState>, message: String) -> Result<String, String>
 
 #[tauri::command]
 fn git_log(state: State<AppState>, max_count: Option<usize>) -> Result<Vec<novanote_core::CommitEntry>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let git = GitIntegration::new(&vault.root_path);
     git.log(max_count.unwrap_or(50)).map_err(|e| e.to_string())
@@ -739,7 +755,7 @@ fn git_log(state: State<AppState>, max_count: Option<usize>) -> Result<Vec<novan
 
 #[tauri::command]
 fn git_diff(state: State<AppState>, path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     let git = GitIntegration::new(&vault.root_path);
     git.diff(&path).map_err(|e| e.to_string())
@@ -815,21 +831,21 @@ async fn multimodal_image_to_note(base_url: String, model: String, image_path: S
 
 #[tauri::command]
 fn vault_start_watcher(state: State<AppState>) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.watch_start().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_stop_watcher(state: State<AppState>) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.watch_stop().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn vault_get_watcher_events(state: State<AppState>) -> Result<Vec<FileChangeEvent>, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault_guard = state.vault.lock();
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.watch_poll_events().map_err(|e| e.to_string())
 }
