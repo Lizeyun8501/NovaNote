@@ -1,11 +1,11 @@
 use rusqlite::{params, Connection};
-use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore};
+use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore, SearchHit, TantivyIndex};
+use crate::file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
 
 pub struct Vault {
     pub root_path: PathBuf,
@@ -14,6 +14,9 @@ pub struct Vault {
     ydoc_holder: YDocHolder,
     pub sync_engine: SyncEngine,
     crdt_store: CrdtStore,
+    file_watcher: Mutex<Option<FileWatcher>>,
+    event_rx: Mutex<Option<tokio::sync::mpsc::Receiver<FileChangeEvent>>>,
+    tantivy_index: Mutex<Option<TantivyIndex>>,
 }
 
 impl Vault {
@@ -51,6 +54,9 @@ impl Vault {
         let crdt_path = vault_dir.join("crdt.db");
         let crdt_store = CrdtStore::open(&crdt_path)?;
 
+        let tantivy_path = vault_dir.join("tantivy_idx");
+        let tantivy_index = TantivyIndex::open(&tantivy_path).ok();
+
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
@@ -58,6 +64,9 @@ impl Vault {
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
             crdt_store,
+            file_watcher: Mutex::new(None),
+            event_rx: Mutex::new(None),
+            tantivy_index: Mutex::new(tantivy_index),
         })
     }
 
@@ -76,6 +85,9 @@ impl Vault {
         let crdt_path = root.join(".vault").join("crdt.db");
         let crdt_store = CrdtStore::open(&crdt_path)?;
 
+        let tantivy_path = root.join(".vault").join("tantivy_idx");
+        let tantivy_index = TantivyIndex::open(&tantivy_path).ok();
+
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
@@ -83,6 +95,9 @@ impl Vault {
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
             crdt_store,
+            file_watcher: Mutex::new(None),
+            event_rx: Mutex::new(None),
+            tantivy_index: Mutex::new(tantivy_index),
         })
     }
 
@@ -213,6 +228,15 @@ impl Vault {
             conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", params![tag])?;
             conn.execute("INSERT INTO note_tags (note_id, tag_name) VALUES (?1, ?2)", params![actual_id, tag])?;
         }
+
+        // Also index in Tantivy if available
+        if let Ok(mut tantivy_guard) = self.tantivy_index.lock() {
+            if let Some(ref mut tantivy) = *tantivy_guard {
+                let _ = tantivy.add_document(&relative_path, &title, &content, &tags);
+                let _ = tantivy.commit();
+            }
+        }
+
         Ok(NoteMeta {
             id: actual_id, title, relative_path, tags, created_at, updated_at: modified,
         })
@@ -222,6 +246,15 @@ impl Vault {
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
         conn.execute("DELETE FROM notes WHERE relative_path = ?1", params![relative_path])?;
         self.ydoc_holder.remove(relative_path);
+
+        // Also delete from Tantivy if available
+        if let Ok(mut tantivy_guard) = self.tantivy_index.lock() {
+            if let Some(ref mut tantivy) = *tantivy_guard {
+                let _ = tantivy.delete_document(relative_path);
+                let _ = tantivy.commit();
+            }
+        }
+
         Ok(())
     }
 
@@ -231,30 +264,56 @@ impl Vault {
         self.ydoc_holder.to_markdown(note_id)
     }
 
-    pub fn start_watcher(&self) -> Result<(), VaultError> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res { tx.send(event).ok(); }
-        }).map_err(|e| VaultError::Other(e.to_string()))?;
-        watcher.watch(&self.root_path, RecursiveMode::Recursive)
-            .map_err(|e| VaultError::Other(e.to_string()))?;
-        std::thread::spawn(move || {
-            for event in rx {
-                match event.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) => {
-                        for path in &event.paths {
-                            if path.extension().map_or(false, |e| e == "md") {
-                                println!("File changed: {:?}", path);
-                            }
-                        }
-                    }
-                    EventKind::Remove(_) => { println!("File removed: {:?}", event.paths); }
-                    _ => {}
-                }
-            }
-            drop(watcher);
-        });
+    pub fn watch_start(&self) -> Result<(), VaultError> {
+        let mut watcher_guard = self.file_watcher.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        if watcher_guard.is_some() {
+            return Ok(()); // Already watching
+        }
+
+        let config = FileWatcherConfig::new(self.root_path.clone());
+        let mut watcher = FileWatcher::new(config)?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(256);
+        watcher.start(tx)?;
+
+        *watcher_guard = Some(watcher);
+
+        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        *rx_guard = Some(rx);
+
         Ok(())
+    }
+
+    pub fn watch_stop(&self) -> Result<(), VaultError> {
+        let mut watcher_guard = self.file_watcher.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        if let Some(ref mut watcher) = *watcher_guard {
+            watcher.stop()?;
+        }
+        *watcher_guard = None;
+
+        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        *rx_guard = None;
+
+        Ok(())
+    }
+
+    pub fn watch_events(&self) -> Option<tokio::sync::mpsc::Receiver<FileChangeEvent>> {
+        let mut rx_guard = self.event_rx.lock().ok()?;
+        rx_guard.take()
+    }
+
+    pub fn watch_poll_events(&self) -> Result<Vec<FileChangeEvent>, VaultError> {
+        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let rx = match rx_guard.as_mut() {
+            Some(rx) => rx,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        Ok(events)
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<NoteMeta>, VaultError> {
@@ -299,6 +358,36 @@ impl Vault {
         Ok(notes)
     }
 
+    /// Advanced search using Tantivy query syntax (e.g., `title:foo AND content:bar`).
+    /// Falls back to FTS5 if Tantivy is not available.
+    pub fn search_advanced(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, VaultError> {
+        // Try Tantivy first
+        if let Ok(tantivy_guard) = self.tantivy_index.lock() {
+            if let Some(ref tantivy) = *tantivy_guard {
+                return tantivy.search(query, limit);
+            }
+        }
+
+        // Fallback: use FTS5 and convert results to SearchHit
+        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let sanitized = query.replace('"', "\"\"");
+        let fts_query = format!("\"{}\"", sanitized);
+        let sql = "SELECT n.relative_path, n.title, fts.rank
+                   FROM notes n INNER JOIN notes_fts fts ON n.rowid = fts.rowid
+                   WHERE notes_fts MATCH ?1 ORDER BY rank LIMIT ?";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![fts_query, limit as i64], |row| {
+            Ok(SearchHit {
+                path: row.get(0)?,
+                title: row.get(1)?,
+                score: row.get::<_, f32>(2)?,
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows { results.push(row?); }
+        Ok(results)
+    }
+
     /// Store an embedding vector for a note
     pub fn store_embedding(&self, relative_path: &str, embedding: &[f32], model: &str) -> Result<(), VaultError> {
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
@@ -316,43 +405,43 @@ impl Vault {
 
     /// Perform semantic search using stored embeddings and cosine similarity.
     /// `query_embedding` is the embedding vector of the search query (generated externally).
+    /// Uses SQL-based vector search with custom cosine_similarity function (sqlite-vec style).
     pub fn semantic_search_with_embedding(&self, query_embedding: &[f32]) -> Result<Vec<VectorSearchResult>, VaultError> {
-        // Get all stored embeddings and compute similarity
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT e.relative_path, e.embedding, n.title
-             FROM embeddings e
-             LEFT JOIN notes n ON e.relative_path = n.relative_path"
-        )?;
 
-        let mut results: Vec<VectorSearchResult> = Vec::new();
-        let rows = stmt.query_map([], |row| {
-            let path: String = row.get(0)?;
-            let blob: Vec<u8> = row.get(1)?;
-            let title: Option<String> = row.get(2)?;
-            Ok((path, blob, title))
-        })?;
-
-        for row in rows {
-            if let Ok((path, blob, title)) = row {
-                let doc_embedding = crate::vector_search::deserialize_embedding(&blob);
-                let similarity = crate::vector_search::cosine_similarity(query_embedding, &doc_embedding);
-                if similarity > 0.3 {
-                    results.push(VectorSearchResult {
-                        relative_path: path,
-                        title: title.unwrap_or_default(),
-                        similarity,
-                    });
-                }
+        // Try SQL-based vector search first (sqlite-vec style with custom function)
+        if let Ok(results) = crate::vector_search::vector_search_sql(&conn, "embeddings_vec", query_embedding, 20) {
+            if !results.is_empty() {
+                return Ok(results);
             }
         }
 
-        // Sort by similarity descending
-        results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        // Fallback: use the existing embeddings table with Rust-side cosine similarity
+        crate::vector_search::register_cosine_similarity_fn(&conn)?;
 
-        // Limit results
-        results.truncate(20);
+        let query_blob = crate::vector_search::serialize_embedding(query_embedding);
+        let sql = "SELECT e.relative_path, cosine_similarity(e.embedding, ?1) AS score, n.title
+                   FROM embeddings e
+                   LEFT JOIN notes n ON e.relative_path = n.relative_path
+                   WHERE cosine_similarity(e.embedding, ?1) > 0.3
+                   ORDER BY score DESC
+                   LIMIT 20";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params![query_blob], |row| {
+            let path: String = row.get(0)?;
+            let similarity: f32 = row.get(1)?;
+            let title: Option<String> = row.get(2)?;
+            Ok(VectorSearchResult {
+                relative_path: path,
+                title: title.unwrap_or_default(),
+                similarity,
+            })
+        })?;
 
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
         Ok(results)
     }
 
@@ -368,6 +457,45 @@ impl Vault {
         let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    /// Perform a RAG (Retrieval-Augmented Generation) query against the vault.
+    /// Generates an embedding for the query, finds similar notes, then uses
+    /// the LLM to generate an answer grounded in the retrieved note content.
+    pub async fn rag_search(
+        &self,
+        query: &str,
+        config: &crate::rag::RagConfig,
+    ) -> Result<crate::rag::RagAnswer, VaultError> {
+        // 1. Generate embedding for the query
+        let embedding = crate::vector_search::generate_embedding(
+            &config.ollama_config.base_url,
+            &config.ollama_config.model,
+            query,
+        )
+        .await
+        .map_err(VaultError::Other)?;
+
+        // 2. Search for similar notes using the query embedding
+        let search_results = self.semantic_search_with_embedding(&embedding)?;
+
+        // 3. Load content of the top-K matching notes
+        let mut note_contents: Vec<(String, String, f32)> = Vec::new();
+        for result in search_results.iter().take(config.top_k) {
+            match self.read_note(&result.relative_path) {
+                Ok(content) => {
+                    note_contents.push((result.relative_path.clone(), content, result.similarity));
+                }
+                Err(_) => continue,
+            }
+        }
+
+        // 4. Call rag_query with the results
+        let answer = crate::rag::rag_query(config, query, note_contents)
+            .await
+            .map_err(VaultError::Other)?;
+
+        Ok(answer)
     }
 
     pub fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError> {
@@ -480,6 +608,15 @@ impl Vault {
         let templates_dir = self.root_path.join(".vault").join("templates");
         if !templates_dir.exists() { fs::create_dir_all(&templates_dir)?; }
         fs::write(templates_dir.join(format!("{}.md", name)), content).map_err(VaultError::Io)
+    }
+
+    pub fn delete_template(&self, name: &str) -> Result<(), VaultError> {
+        let path = self.root_path.join(".vault").join("templates").join(format!("{}.md", name));
+        if path.exists() {
+            fs::remove_file(&path).map_err(VaultError::Io)
+        } else {
+            Err(VaultError::Other(format!("Template '{}' not found", name)))
+        }
     }
 
     pub fn import_from_obsidian(&self, source_dir: &Path) -> Result<Vec<NoteMeta>, VaultError> {

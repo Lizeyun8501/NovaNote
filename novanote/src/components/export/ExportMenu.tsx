@@ -34,7 +34,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
     if (!filePath) return;
 
     try {
-      await invoke("vault_export_markdown", {
+      await invoke("export_note_md", {
         relativePath: currentNotePath,
         outputPath: filePath,
       });
@@ -55,7 +55,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
     if (!filePath) return;
 
     try {
-      await invoke("vault_export_html", {
+      await invoke("export_note_html", {
         relativePath: currentNotePath,
         outputPath: filePath,
       });
@@ -64,10 +64,25 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
     }
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!currentNotePath) return;
     setOpen(false);
-    window.print();
+
+    const defaultName = currentNotePath.replace(/\.md$/i, "") + ".pdf";
+    const filePath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!filePath) return;
+
+    try {
+      await invoke("export_note_pdf", {
+        relativePath: currentNotePath,
+        outputPath: filePath,
+      });
+    } catch (err) {
+      console.error("Failed to export PDF:", err);
+    }
   };
 
   return (

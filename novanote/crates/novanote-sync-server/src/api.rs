@@ -3,12 +3,13 @@
 
 use axum::{
     Json,
-    extract::{Path, State, Query},
+    extract::{Path, State, Query, Extension},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use base64::Engine;
 use uuid::Uuid;
+use crate::auth::{self, AuthUser};
 use crate::server::AppState;
 use crate::storage;
 use crate::totp;
@@ -140,6 +141,7 @@ pub async fn api_get_doc(
 
 pub async fn api_push(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(doc_id): Path<String>,
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, axum::http::StatusCode> {
@@ -149,7 +151,7 @@ pub async fn api_push(
         .decode(&body.encrypted_blob)
         .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
 
-    let user_id = Uuid::new_v4(); // simplified; in production extract from JWT
+    let user_id = auth_user.user_id;
     let vc = body.vector_clock.unwrap_or(serde_json::Value::Null);
 
     storage::store_blob(&state.db, doc_uuid, user_id, &vc, &blob_bytes)
@@ -244,10 +246,11 @@ pub struct ClipResponse {
 /// the server would forward to a connected desktop client or store for later sync).
 pub async fn api_clip(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
     Json(body): Json<ClipRequest>,
 ) -> Result<Json<ClipResponse>, axum::http::StatusCode> {
     let doc_id = Uuid::new_v4();
-    let user_id = Uuid::new_v4(); // simplified; in production extract from JWT
+    let user_id = auth_user.user_id;
 
     // Serialize the clip as JSON, then store as a blob
     let clip_data = serde_json::json!({
@@ -309,6 +312,105 @@ pub async fn api_wechat_clip(
         ok: true,
         doc_id: doc_id.to_string(),
     }))
+}
+
+// ── Auth endpoints ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    pub token: String,
+    pub user_id: String,
+}
+
+/// Register a new user and return a JWT.
+pub async fn api_register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterRequest>,
+) -> Result<Json<AuthResponse>, (axum::http::StatusCode, String)> {
+    // Check if username already exists
+    let existing: Option<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&body.username)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if existing.is_some() {
+        return Err((axum::http::StatusCode::CONFLICT, "Username already exists".to_string()));
+    }
+
+    // Hash the password with a simple scheme (in production use argon2/bcrypt)
+    let password_hash = sha256_hex(&body.password);
+
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)")
+        .bind(user_id)
+        .bind(&body.username)
+        .bind(&password_hash)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let token = auth::create_token(&user_id.to_string(), &state.jwt_secret)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(AuthResponse {
+        token,
+        user_id: user_id.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// Validate credentials and return a JWT.
+pub async fn api_login(
+    State(state): State<AppState>,
+    Json(body): Json<LoginRequest>,
+) -> Result<Json<AuthResponse>, (axum::http::StatusCode, String)> {
+    let row = sqlx::query("SELECT id, password_hash FROM users WHERE username = $1")
+        .bind(&body.username)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err((axum::http::StatusCode::UNAUTHORIZED, "Invalid credentials".to_string())),
+    };
+
+    let user_id: Uuid = row.get("id");
+    let stored_hash: String = row.get("password_hash");
+
+    if stored_hash != sha256_hex(&body.password) {
+        return Err((axum::http::StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+    }
+
+    let token = auth::create_token(&user_id.to_string(), &state.jwt_secret)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(AuthResponse {
+        token,
+        user_id: user_id.to_string(),
+    }))
+}
+
+/// Simple SHA-256 hex digest for password hashing.
+fn sha256_hex(input: &str) -> String {
+    use std::fmt::Write;
+    let hash = <sha2::Sha256 as sha2::Digest>::digest(input.as_bytes());
+    hash.iter().fold(String::new(), |mut acc, b| {
+        write!(&mut acc, "{b:02x}").unwrap();
+        acc
+    })
 }
 
 // ── TOTP Two-Factor Authentication endpoints ──────────────────────────────────

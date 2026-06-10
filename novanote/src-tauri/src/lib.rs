@@ -3,9 +3,12 @@ use novanote_core::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMod
 use novanote_core::{OcrConfig, OcrResult};
 use novanote_core::{parse_eml_file, email_to_markdown};
 use novanote_core::VectorSearchResult;
+use novanote_core::SearchHit;
 use novanote_core::GitIntegration;
 use novanote_core::AuditEntry;
 use novanote_core::TranscriptionResult;
+use novanote_core::ExportFormat;
+use novanote_core::FileChangeEvent;
 use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
@@ -89,6 +92,13 @@ fn vault_search_regex(state: State<AppState>, pattern: String) -> Result<Vec<Not
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.search_regex(&pattern).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn vault_search_advanced(state: State<AppState>, query: String, limit: Option<usize>) -> Result<Vec<SearchHit>, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.search_advanced(&query, limit.unwrap_or(50)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -224,9 +234,32 @@ fn vault_export_html(state: State<AppState>, relative_path: String, output_path:
 fn vault_export_markdown(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let content = std::fs::read_to_string(vault.root_path.join(&relative_path))
-        .map_err(|e| e.to_string())?;
-    std::fs::write(&output_path, content).map_err(|e| e.to_string())
+    let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
+    std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_note_md(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
+    std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_note_html(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Html).map_err(|e| e.to_string())?;
+    std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_note_pdf(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Pdf).map_err(|e| e.to_string())?;
+    std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -260,10 +293,33 @@ fn vault_write_canvas(state: State<AppState>, relative_path: String, data: Strin
 }
 
 #[tauri::command]
+fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let full_path = vault.root_path.join(&relative_path);
+    std::fs::write(&full_path, data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    let full_path = vault.root_path.join(&relative_path);
+    std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn vault_save_as_template(state: State<AppState>, name: String, content: String) -> Result<(), String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
     vault.save_as_template(&name, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn vault_delete_template(state: State<AppState>, name: String) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.delete_template(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -526,6 +582,30 @@ fn ai_embedding_status(state: State<AppState>) -> Result<(bool, i64), String> {
 }
 
 #[tauri::command]
+async fn ai_rag_query(
+    state: State<'_, AppState>,
+    query: String,
+    base_url: String,
+    model: String,
+    top_k: Option<usize>,
+    max_context_chars: Option<usize>,
+) -> Result<RagAnswer, String> {
+    let config = RagConfig {
+        ollama_config: OllamaConfig {
+            base_url,
+            model,
+            ..OllamaConfig::default()
+        },
+        top_k: top_k.unwrap_or(5),
+        max_context_chars: max_context_chars.unwrap_or(4000),
+    };
+
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.rag_search(&query, &config).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn vault_query_sql(state: State<AppState>, sql: String) -> Result<Vec<serde_json::Value>, String> {
     let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
     let vault = vault_guard.as_ref().ok_or("No vault opened")?;
@@ -614,6 +694,23 @@ async fn integration_github_issues(token: String, repo: String) -> Result<Vec<no
 async fn integration_slack_messages(token: String, channel: String, limit: Option<usize>) -> Result<Vec<novanote_core::SlackMessage>, String> {
     let config = novanote_core::SlackConfig { bot_token: token, channel: Some(channel) };
     novanote_core::slack_list_messages(&config, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+async fn integration_notion_pages(api_key: String, database_id: Option<String>) -> Result<Vec<novanote_core::NotionPage>, String> {
+    let config = novanote_core::NotionConfig {
+        api_key,
+        database_id,
+        ..novanote_core::NotionConfig::default()
+    };
+    novanote_core::notion_list_pages(&config).await
+}
+
+#[tauri::command]
+async fn integration_notion_to_markdown(api_key: String, page_id: String) -> Result<String, String> {
+    let config = novanote_core::NotionConfig::default();
+    let config = novanote_core::NotionConfig { api_key, ..config };
+    novanote_core::notion_page_to_markdown(&config, &page_id).await
 }
 
 #[tauri::command]
@@ -716,6 +813,27 @@ async fn multimodal_image_to_note(base_url: String, model: String, image_path: S
     novanote_core::image_to_note(&config, &image_path).await
 }
 
+#[tauri::command]
+fn vault_start_watcher(state: State<AppState>) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.watch_start().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn vault_stop_watcher(state: State<AppState>) -> Result<(), String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.watch_stop().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn vault_get_watcher_events(state: State<AppState>) -> Result<Vec<FileChangeEvent>, String> {
+    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
+    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    vault.watch_poll_events().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Determine plugins directory
@@ -736,6 +854,7 @@ pub fn run() {
             vault_list_notes,
             vault_search,
             vault_search_regex,
+            vault_search_advanced,
             vault_scan,
             vault_read_note,
             vault_write_note,
@@ -748,11 +867,17 @@ pub fn run() {
             vault_get_graph_data,
             vault_export_html,
             vault_export_markdown,
+            export_note_md,
+            export_note_html,
+            export_note_pdf,
             vault_list_templates,
             vault_get_template_content,
             vault_save_as_template,
+            vault_delete_template,
             vault_read_canvas,
             vault_write_canvas,
+            save_canvas,
+            load_canvas,
             sync_configure,
             sync_enable,
             sync_disable,
@@ -768,6 +893,7 @@ pub fn run() {
             ai_index_embedding,
             ai_index_all_embeddings,
             ai_embedding_status,
+            ai_rag_query,
             vault_query_sql,
             plugin_list,
             plugin_install,
@@ -782,6 +908,8 @@ pub fn run() {
             ai_analyze_graph,
             integration_github_issues,
             integration_slack_messages,
+            integration_notion_pages,
+            integration_notion_to_markdown,
             audit_log_list,
             whisper_transcribe,
             keychain_store,
@@ -792,7 +920,10 @@ pub fn run() {
             webauthn_auth_challenge,
             multimodal_analyze,
             multimodal_describe,
-            multimodal_image_to_note
+            multimodal_image_to_note,
+            vault_start_watcher,
+            vault_stop_watcher,
+            vault_get_watcher_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

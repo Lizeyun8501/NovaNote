@@ -1,5 +1,6 @@
 import ThemeToggle from "../theme/ThemeToggle";
 import { SyncStatus } from "../sync/SyncStatus";
+import { useTranslation } from "react-i18next";
 import type { FileTreeNode } from "../../types";
 import FileTree from "./FileTree";
 import ActionBar from "./ActionBar";
@@ -49,6 +50,7 @@ export default function Sidebar({
   onOpenCalendar,
   onOpenPlugins,
 }: SidebarProps) {
+  const { t } = useTranslation();
   const [collapsedInternal, setCollapsedInternal] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const collapsed = collapsedProp ?? collapsedInternal;
@@ -88,7 +90,7 @@ export default function Sidebar({
             <button
               onClick={onSyncClick}
               className="border-none bg-transparent cursor-pointer p-0"
-              title="Sync Settings"
+              title={t("sidebar.syncSettings")}
             >
               <SyncStatus />
             </button>
@@ -98,7 +100,7 @@ export default function Sidebar({
             onClick={toggleCollapsed}
             className="px-1 py-1 rounded text-base hover:opacity-80"
             style={{ color: "var(--text-secondary)" }}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? t("sidebar.expandSidebar") : t("sidebar.collapseSidebar")}
           >
             {collapsed ? "☰" : "✕"}
           </button>
@@ -118,7 +120,7 @@ export default function Sidebar({
               className="text-sm px-2 py-4 text-center"
               style={{ color: "var(--text-muted)" }}
             >
-              No vault opened.
+              {t("sidebar.noVault")}
             </p>
           ) : (
             <FileTree
@@ -146,7 +148,7 @@ export default function Sidebar({
               color: "var(--text-secondary)",
             }}
           >
-            <span>Tags</span>
+            <span>{t("sidebar.tags")}</span>
             <span
               style={{
                 transform: tagsExpanded ? "rotate(90deg)" : "rotate(0deg)",

@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["native"]
-native = ["dep:rocksdb"]
+native = ["dep:rocksdb", "dep:coset", "dep:p256", "dep:printpdf", "dep:tantivy", "dep:notify"]
 wasm = []
 
 [dependencies]
@@ -24,17 +24,28 @@ zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
 # Native dependencies (used by vault_impl, sync modules)
-rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+rusqlite = { version = "0.32", features = ["bundled", "serde_json", "functions"] }
 rocksdb = { version = "0.22", optional = true }
 prost = "0.13"
-notify = { version = "7", features = [] }
+notify = { version = "7", optional = true }
 walkdir = "2"
 tar = "0.4"
 pulldown-cmark = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
 mailparse = "0.15"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
+tokio-tungstenite = { version = "0.24", features = ["connect"] }
+futures-util = "0.3"
 hmac = "0.12"
 sha2 = "0.10"
 dirs = "5"
 whoami = "1"
+url = "2"
+
+# WebAuthn verification (native only)
+coset = { version = "0.3", optional = true }
+p256 = { version = "0.13", features = ["ecdsa"], optional = true }
+printpdf = { version = "0.7", optional = true }
+
+# Tantivy full-text search engine (native only)
+tantivy = { version = "0.22", optional = true }

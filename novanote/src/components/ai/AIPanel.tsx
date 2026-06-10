@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 
 interface AIPanelProps {
@@ -7,10 +8,23 @@ interface AIPanelProps {
   onTagsGenerated?: (tags: string[]) => void;
   onSummaryGenerated?: (summary: string) => void;
   onWritingResult?: (text: string) => void;
+  onNavigateToNote?: (path: string) => void;
   onClose: () => void;
 }
 
-type TabId = "tags" | "summary" | "writing";
+interface RagSource {
+  note_path: string;
+  relevance_score: number;
+  snippet: string;
+}
+
+interface RagAnswer {
+  answer: string;
+  sources: RagSource[];
+  model: string;
+}
+
+type TabId = "tags" | "summary" | "writing" | "rag";
 
 export default function AIPanel({
   currentNotePath,
@@ -18,8 +32,10 @@ export default function AIPanel({
   onTagsGenerated,
   onSummaryGenerated,
   onWritingResult,
+  onNavigateToNote,
   onClose,
 }: AIPanelProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabId>("tags");
   const [baseUrl, setBaseUrl] = useState("http://localhost:11434");
   const [model, setModel] = useState("llama3.2");
@@ -31,6 +47,10 @@ export default function AIPanel({
   // Writing assist mode
   const [writingMode, setWritingMode] = useState("polish");
   const [writingText, setWritingText] = useState(selectedText || "");
+
+  // RAG Q&A
+  const [ragQuery, setRagQuery] = useState("");
+  const [ragAnswer, setRagAnswer] = useState<RagAnswer | null>(null);
 
   const checkConnection = useCallback(async () => {
     try {
@@ -112,6 +132,45 @@ export default function AIPanel({
     }
   }, [baseUrl, model, writingText, writingMode, onWritingResult]);
 
+  const performRagQuery = useCallback(async () => {
+    const q = ragQuery.trim();
+    if (!q) {
+      setError("Please enter a question.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setRagAnswer(null);
+    setResult("");
+    try {
+      const res: RagAnswer = await invoke("ai_rag_query", {
+        query: q,
+        baseUrl,
+        model,
+      });
+      setRagAnswer(res);
+      setResult(res.answer);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [baseUrl, model, ragQuery]);
+
+  const handleSourceClick = useCallback(
+    (path: string) => {
+      onNavigateToNote?.(path);
+    },
+    [onNavigateToNote]
+  );
+
+  const tabLabels: Record<TabId, string> = {
+    tags: t("ai.tags"),
+    summary: t("ai.summary"),
+    writing: t("ai.writing"),
+    rag: t("ai.rag"),
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -120,7 +179,7 @@ export default function AIPanel({
       }}
     >
       <div
-        className="w-[520px] max-h-[80vh] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+        className="w-[560px] max-h-[85vh] flex flex-col rounded-xl shadow-2xl overflow-hidden"
         style={{
           backgroundColor: "var(--bg-primary)",
           border: "1px solid var(--border-color)",
@@ -132,7 +191,7 @@ export default function AIPanel({
           className="flex items-center justify-between px-5 py-3 border-b"
           style={{ borderColor: "var(--border-color)" }}
         >
-          <h2 className="font-semibold text-base">AI Assistant</h2>
+          <h2 className="font-semibold text-base">{t("ai.title")}</h2>
           <button
             onClick={onClose}
             className="p-1 rounded hover:opacity-70 transition-opacity"
@@ -163,7 +222,7 @@ export default function AIPanel({
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="Model"
+            placeholder={t("ai.model")}
             className="w-32 px-2 py-1.5 rounded border text-sm"
             style={{
               backgroundColor: "var(--bg-primary)",
@@ -190,7 +249,7 @@ export default function AIPanel({
               border: "1px solid var(--border-color)",
             }}
           >
-            {ollamaStatus === "unknown" ? "Test" : ollamaStatus === "connected" ? "OK" : "Offline"}
+            {ollamaStatus === "unknown" ? t("ai.test") : ollamaStatus === "connected" ? t("ai.connected") : t("ai.disconnected")}
           </button>
         </div>
 
@@ -199,21 +258,22 @@ export default function AIPanel({
           className="flex border-b"
           style={{ borderColor: "var(--border-color)" }}
         >
-          {(["tags", "summary", "writing"] as TabId[]).map((tab) => (
+          {(["tags", "summary", "writing", "rag"] as TabId[]).map((tab) => (
             <button
               key={tab}
               onClick={() => {
                 setActiveTab(tab);
                 setResult("");
                 setError("");
+                if (tab !== "rag") setRagAnswer(null);
               }}
-              className="px-4 py-2 text-sm font-medium transition-colors capitalize"
+              className="px-4 py-2 text-sm font-medium transition-colors"
               style={{
                 color: activeTab === tab ? "var(--accent-color, #3b82f6)" : "var(--text-secondary)",
                 borderBottom: activeTab === tab ? "2px solid var(--accent-color, #3b82f6)" : "2px solid transparent",
               }}
             >
-              {tab === "tags" ? "Smart Tags" : tab === "summary" ? "Summarize" : "Writing Assist"}
+              {tabLabels[tab]}
             </button>
           ))}
         </div>
@@ -224,7 +284,7 @@ export default function AIPanel({
           {activeTab === "tags" && (
             <>
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Generate smart tags for the current note using AI.
+                {t("ai.generatingTagsDesc")}
               </p>
               <button
                 onClick={generateTags}
@@ -235,7 +295,7 @@ export default function AIPanel({
                   color: "#fff",
                 }}
               >
-                {loading ? "Generating..." : "Generate Tags"}
+                {loading ? t("ai.generating") : t("ai.generateTags")}
               </button>
             </>
           )}
@@ -244,7 +304,7 @@ export default function AIPanel({
           {activeTab === "summary" && (
             <>
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Generate a concise summary of the current note.
+                {t("ai.generatingSummaryDesc")}
               </p>
               <button
                 onClick={generateSummary}
@@ -255,7 +315,7 @@ export default function AIPanel({
                   color: "#fff",
                 }}
               >
-                {loading ? "Summarizing..." : "Generate Summary"}
+                {loading ? t("ai.summarizing") : t("ai.generateSummary")}
               </button>
             </>
           )}
@@ -265,10 +325,10 @@ export default function AIPanel({
             <>
               <div className="flex gap-2 flex-wrap">
                 {[
-                  { id: "polish", label: "Polish" },
-                  { id: "continue", label: "Continue" },
-                  { id: "translate_to_chinese", label: "→ Chinese" },
-                  { id: "translate_to_english", label: "→ English" },
+                  { id: "polish", label: t("ai.polish") },
+                  { id: "continue", label: t("ai.continue") },
+                  { id: "translate_to_chinese", label: t("ai.toChinese") },
+                  { id: "translate_to_english", label: t("ai.toEnglish") },
                 ].map((m) => (
                   <button
                     key={m.id}
@@ -287,7 +347,7 @@ export default function AIPanel({
               <textarea
                 value={writingText}
                 onChange={(e) => setWritingText(e.target.value)}
-                placeholder="Enter or paste text for AI assistance..."
+                placeholder={t("ai.writingPlaceholder")}
                 rows={5}
                 className="w-full px-3 py-2 rounded border text-sm resize-none"
                 style={{
@@ -305,8 +365,109 @@ export default function AIPanel({
                   color: "#fff",
                 }}
               >
-                {loading ? "Processing..." : "Run"}
+                {loading ? t("ai.processing") : t("ai.run")}
               </button>
+            </>
+          )}
+
+          {/* RAG Q&A tab */}
+          {activeTab === "rag" && (
+            <>
+              <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                {t("ai.ragDesc")}
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={ragQuery}
+                  onChange={(e) => setRagQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !loading) {
+                      e.preventDefault();
+                      performRagQuery();
+                    }
+                  }}
+                  placeholder={t("ai.ragPlaceholder")}
+                  className="flex-1 px-3 py-2 rounded border text-sm"
+                  style={{
+                    backgroundColor: "var(--bg-secondary)",
+                    borderColor: "var(--border-color)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+                <button
+                  onClick={performRagQuery}
+                  disabled={loading || !ragQuery.trim()}
+                  className="px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50"
+                  style={{
+                    backgroundColor: "var(--accent-color, #3b82f6)",
+                    color: "#fff",
+                  }}
+                >
+                  {loading ? t("ai.searching") : t("ai.ask")}
+                </button>
+              </div>
+
+              {/* RAG Answer */}
+              {ragAnswer && (
+                <div className="flex flex-col gap-3">
+                  {/* Answer */}
+                  <div
+                    className="p-3 rounded text-sm whitespace-pre-wrap"
+                    style={{
+                      backgroundColor: "var(--bg-secondary)",
+                      border: "1px solid var(--border-color)",
+                      color: "var(--text-primary)",
+                    }}
+                  >
+                    {ragAnswer.answer}
+                  </div>
+
+                  {/* Source citations */}
+                  {ragAnswer.sources.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                        {t("ai.sources", { count: ragAnswer.sources.length })}
+                      </span>
+                      {ragAnswer.sources.map((source, idx) => (
+                        <div
+                          key={idx}
+                          className="flex flex-col gap-1 p-2 rounded text-xs"
+                          style={{
+                            backgroundColor: "var(--bg-secondary)",
+                            border: "1px solid var(--border-color)",
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleSourceClick(source.note_path)}
+                              className="font-medium hover:underline"
+                              style={{ color: "var(--accent-color, #3b82f6)" }}
+                            >
+                              {source.note_path}
+                            </button>
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px]"
+                              style={{
+                                backgroundColor: "#3b82f620",
+                                color: "#3b82f6",
+                              }}
+                            >
+                              {(source.relevance_score * 100).toFixed(0)}% match
+                            </span>
+                          </div>
+                          <p
+                            className="line-clamp-2"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {source.snippet}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -320,8 +481,8 @@ export default function AIPanel({
             </div>
           )}
 
-          {/* Result */}
-          {result && (
+          {/* Result (non-RAG tabs) */}
+          {result && activeTab !== "rag" && (
             <div
               className="p-3 rounded text-sm whitespace-pre-wrap max-h-48 overflow-y-auto"
               style={{

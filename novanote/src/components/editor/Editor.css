@@ -140,8 +140,8 @@
 
 /* Code Block */
 .editor-content .ProseMirror pre {
-  background: #1f2937;
-  color: #f3f4f6;
+  background: #0d1117;
+  color: #c9d1d9;
   border-radius: 6px;
   padding: 12px 16px;
   margin: 0.75em 0;
@@ -156,6 +156,124 @@
   color: inherit;
   font-size: inherit;
   padding: 0;
+}
+
+/* Syntax Highlighting - GitHub Dark Theme */
+.editor-content .ProseMirror pre .hljs-keyword,
+.editor-content .ProseMirror pre .hljs-selector-tag,
+.editor-content .ProseMirror pre .hljs-type {
+  color: #ff7b72;
+}
+
+.editor-content .ProseMirror pre .hljs-string,
+.editor-content .ProseMirror pre .hljs-template-tag,
+.editor-content .ProseMirror pre .hljs-template-variable {
+  color: #a5d6ff;
+}
+
+.editor-content .ProseMirror pre .hljs-comment,
+.editor-content .ProseMirror pre .hljs-doctag {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.editor-content .ProseMirror pre .hljs-number,
+.editor-content .ProseMirror pre .hljs-literal {
+  color: #79c0ff;
+}
+
+.editor-content .ProseMirror pre .hljs-function .hljs-title,
+.editor-content .ProseMirror pre .hljs-title.function_ {
+  color: #d2a8ff;
+}
+
+.editor-content .ProseMirror pre .hljs-built_in {
+  color: #ffa657;
+}
+
+.editor-content .ProseMirror pre .hljs-variable,
+.editor-content .ProseMirror pre .hljs-attr {
+  color: #79c0ff;
+}
+
+.editor-content .ProseMirror pre .hljs-params {
+  color: #c9d1d9;
+}
+
+.editor-content .ProseMirror pre .hljs-meta {
+  color: #8b949e;
+}
+
+.editor-content .ProseMirror pre .hljs-symbol,
+.editor-content .ProseMirror pre .hljs-bullet {
+  color: #ffa657;
+}
+
+.editor-content .ProseMirror pre .hljs-regexp {
+  color: #a5d6ff;
+}
+
+.editor-content .ProseMirror pre .hljs-addition {
+  color: #aff5b4;
+  background-color: rgba(46, 160, 67, 0.15);
+}
+
+.editor-content .ProseMirror pre .hljs-deletion {
+  color: #ffdcd7;
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+.editor-content .ProseMirror pre .hljs-property {
+  color: #79c0ff;
+}
+
+.editor-content .ProseMirror pre .hljs-section {
+  color: #d2a8ff;
+  font-weight: bold;
+}
+
+.editor-content .ProseMirror pre .hljs-title.class_ {
+  color: #ffa657;
+}
+
+.editor-content .ProseMirror pre .hljs-tag {
+  color: #7ee787;
+}
+
+.editor-content .ProseMirror pre .hljs-name {
+  color: #7ee787;
+}
+
+.editor-content .ProseMirror pre .hljs-attribute {
+  color: #79c0ff;
+}
+
+.editor-content .ProseMirror pre .hljs-selector-class {
+  color: #7ee787;
+}
+
+.editor-content .ProseMirror pre .hljs-selector-id {
+  color: #ffa657;
+}
+
+.editor-content .ProseMirror pre .hljs-selector-attr {
+  color: #79c0ff;
+}
+
+.editor-content .ProseMirror pre .hljs-selector-pseudo {
+  color: #d2a8ff;
+}
+
+.editor-content .ProseMirror pre .hljs-punctuation {
+  color: #c9d1d9;
+}
+
+.editor-content .ProseMirror pre .hljs-operator {
+  color: #ff7b72;
+}
+
+.editor-content .ProseMirror pre .hljs-char.escape_ {
+  color: #a5d6ff;
 }
 
 /* Inline Code */
@@ -270,8 +388,8 @@
   }
 
   .editor-content .ProseMirror pre {
-    background: #111827;
-    color: #e5e7eb;
+    background: #0d1117;
+    color: #c9d1d9;
   }
 
   .editor-content .ProseMirror hr {

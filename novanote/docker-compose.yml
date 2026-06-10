@@ -4,7 +4,7 @@ services:
   sync-server:
     build:
       context: .
-      dockerfile: Dockerfile.sync-server
+      dockerfile: crates/novanote-sync-server/Dockerfile
     ports:
       - "3000:3000"
     environment:
@@ -13,17 +13,26 @@ services:
       - BIND_ADDR=0.0.0.0:3000
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - RUST_LOG=info
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=novanote-sync
+      - S3_REGION=us-east-1
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_started
     restart: unless-stopped
     volumes:
       - sync-data:/app/data
+    networks:
+      - novanote-net
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     environment:
       - POSTGRES_USER=novanote
       - POSTGRES_PASSWORD=novanote_secret
@@ -38,6 +47,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - novanote-net
 
   redis:
     image: redis:7-alpine
@@ -46,8 +57,30 @@ services:
     volumes:
       - redis-data:/data
     restart: unless-stopped
+    networks:
+      - novanote-net
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    networks:
+      - novanote-net
 
 volumes:
   postgres-data:
   redis-data:
+  minio-data:
   sync-data:
+
+networks:
+  novanote-net:
+    driver: bridge

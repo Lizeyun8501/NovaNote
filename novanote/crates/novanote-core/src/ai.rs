@@ -123,7 +123,7 @@ pub async fn list_models(config: &OllamaConfig) -> Result<Vec<String>, String> {
 }
 
 /// Call Ollama generate API
-async fn call_ollama(config: &OllamaConfig, prompt: &str, max_tokens: i32) -> Result<String, String> {
+pub async fn call_ollama(config: &OllamaConfig, prompt: &str, max_tokens: i32) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(config.timeout_secs))
         .build()

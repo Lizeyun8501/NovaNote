@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Editor } from "./components/editor";
 import Sidebar from "./components/sidebar/Sidebar";
@@ -7,6 +8,8 @@ import BacklinksPanel from "./components/backlinks/BacklinksPanel";
 import GraphView from "./components/graph/GraphView";
 import ExportMenu from "./components/export/ExportMenu";
 import TemplateSelector from "./components/templates/TemplateSelector";
+import TemplateManager from "./components/template/TemplateManager";
+import OutlinePanel from "./components/outline/OutlinePanel";
 import ImportWizard from "./components/import/ImportWizard";
 import CanvasEditor from "./components/canvas/CanvasEditor";
 import CommandPalette from "./components/command-palette/CommandPalette";
@@ -41,6 +44,7 @@ function useMediaQuery(query: string): boolean {
 }
 
 function App() {
+  const { t } = useTranslation();
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
@@ -52,6 +56,8 @@ function App() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [showOutline, setShowOutline] = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [canvasPath, setCanvasPath] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -110,6 +116,121 @@ function App() {
     }
   }, [openVault]);
 
+  // File watcher: start when vault is opened, poll for external changes
+  useEffect(() => {
+    if (!vaultPath) return;
+
+    // Start the file watcher
+    invoke("vault_start_watcher").catch((err) =>
+      console.error("Failed to start file watcher:", err)
+    );
+
+    // Poll for file change events every 2 seconds
+    const pollInterval = setInterval(async () => {
+      try {
+        const events = await invoke<
+          { type: string; path: string; from?: string; to?: string }[]
+        >("vault_get_watcher_events");
+
+        for (const event of events) {
+          const relativePath = event.path
+            ? event.path.replace(vaultPath + "/", "").replace(vaultPath + "\\", "")
+            : null;
+
+          switch (event.type) {
+            case "Modified":
+              if (relativePath && relativePath === currentPathRef.current) {
+                // Currently selected file was modified externally - reload content
+                try {
+                  const content: string = await invoke("vault_read_note", {
+                    relativePath: relativePath,
+                  });
+                  setNoteContent(content);
+                  setHtmlContent(content);
+                } catch (readErr) {
+                  console.error("Failed to reload modified note:", readErr);
+                }
+              }
+              // Re-index the modified file
+              try {
+                await invoke("vault_scan");
+                const noteList: NoteMeta[] = await invoke("vault_list_notes");
+                setNotes(noteList);
+                setFileTree(buildFileTree(noteList));
+              } catch (scanErr) {
+                console.error("Failed to re-scan after modification:", scanErr);
+              }
+              break;
+
+            case "Created":
+              // New file created externally - refresh the file list
+              try {
+                await invoke("vault_scan");
+                const noteList: NoteMeta[] = await invoke("vault_list_notes");
+                setNotes(noteList);
+                setFileTree(buildFileTree(noteList));
+              } catch (scanErr) {
+                console.error("Failed to re-scan after creation:", scanErr);
+              }
+              break;
+
+            case "Deleted":
+              // File deleted externally - refresh file list and clear if current
+              if (relativePath && relativePath === currentPathRef.current) {
+                setSelectedPath(null);
+                currentPathRef.current = null;
+                setHtmlContent("");
+                setNoteContent("");
+              }
+              try {
+                await invoke("vault_scan");
+                const noteList: NoteMeta[] = await invoke("vault_list_notes");
+                setNotes(noteList);
+                setFileTree(buildFileTree(noteList));
+              } catch (scanErr) {
+                console.error("Failed to re-scan after deletion:", scanErr);
+              }
+              break;
+
+            case "Renamed":
+              // File renamed externally - refresh file list
+              if (relativePath && relativePath === currentPathRef.current) {
+                // If the current file was renamed, try to follow it
+                const newRelativePath = event.to
+                  ? event.to.replace(vaultPath + "/", "").replace(vaultPath + "\\", "")
+                  : null;
+                if (newRelativePath) {
+                  setSelectedPath(newRelativePath);
+                  currentPathRef.current = newRelativePath;
+                } else {
+                  setSelectedPath(null);
+                  currentPathRef.current = null;
+                  setHtmlContent("");
+                  setNoteContent("");
+                }
+              }
+              try {
+                await invoke("vault_scan");
+                const noteList: NoteMeta[] = await invoke("vault_list_notes");
+                setNotes(noteList);
+                setFileTree(buildFileTree(noteList));
+              } catch (scanErr) {
+                console.error("Failed to re-scan after rename:", scanErr);
+              }
+              break;
+          }
+        }
+      } catch (err) {
+        // Silently ignore poll errors (vault might be closed)
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(pollInterval);
+      invoke("vault_stop_watcher").catch(() => {});
+    };
+  }, [vaultPath]);
+
   // Select a file and load its content
   const handleSelectFile = useCallback(async (path: string) => {
     // Check if it's a canvas file
@@ -154,7 +275,7 @@ function App() {
       } catch {
         // Note doesn't exist, ask user for confirmation before creating
         const confirmed = window.confirm(
-          `Note '${target}' does not exist. Create it?`
+          t("app.createLinkedNote", { target })
         );
         if (!confirmed) return;
 
@@ -256,42 +377,28 @@ function App() {
     }
   }, [selectedPath]);
 
-  // Handle new note creation
+  // Handle new note creation - show template manager first
   const handleNewNote = useCallback(async () => {
     if (!vaultPath) return;
-
-    const fileName = `Untitled-${Date.now()}.md`;
-    const content = `# Untitled\n\nStart writing here.\n`;
-
-    try {
-      // Write the file using the vault_write_note command
-      await invoke("vault_write_note", {
-        relativePath: fileName,
-        content,
-      });
-
-      // Re-scan to update the list
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-
-      // Select the new file
-      setSelectedPath(fileName);
-      currentPathRef.current = fileName;
-      setNoteContent(content);
-      setHtmlContent(content);
-    } catch (err) {
-      console.error("Failed to create note:", err);
-    }
+    setShowTemplateManager(true);
   }, [vaultPath]);
+
+  // Handle heading click from outline panel - scroll editor to heading
+  const handleHeadingClick = useCallback((headingId: string) => {
+    const editorEl = document.querySelector(".editor-content .ProseMirror");
+    if (!editorEl) return;
+    const targetEl = editorEl.querySelector(`#${CSS.escape(headingId)}`);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
 
   // Handle new canvas creation
   const handleNewCanvas = useCallback(async () => {
     if (!vaultPath) return;
 
     const fileName = `Untitled-canvas-${Date.now()}.canvas`;
-    const data = JSON.stringify({ nodes: [], edges: [] });
+    const data = JSON.stringify({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
 
     try {
       await invoke("vault_write_canvas", {
@@ -400,6 +507,44 @@ function App() {
       await invoke("vault_save_as_template", { name: templateName, content });
     } catch (err) {
       console.error("Failed to save as template:", err);
+    }
+  }, []);
+
+  // Handle template manager selection - create new note with template content
+  const handleTemplateManagerSelect = useCallback(async (content: string) => {
+    if (!vaultPath) return;
+
+    setShowTemplateManager(false);
+
+    // If content is empty (user clicked "Skip"), create a blank note
+    const noteContent = content || `# Untitled\n\nStart writing here.\n`;
+    const fileName = `Untitled-${Date.now()}.md`;
+
+    try {
+      await invoke("vault_write_note", { relativePath: fileName, content: noteContent });
+      await invoke("vault_scan");
+      const noteList: NoteMeta[] = await invoke("vault_list_notes");
+      setNotes(noteList);
+      setFileTree(buildFileTree(noteList));
+      setSelectedPath(fileName);
+      currentPathRef.current = fileName;
+      setNoteContent(noteContent);
+      setHtmlContent(noteContent);
+    } catch (err) {
+      console.error("Failed to create note from template:", err);
+    }
+  }, [vaultPath]);
+
+  // Handle saving template from TemplateManager
+  const handleTemplateManagerSave = useCallback(async (name: string, content: string) => {
+    const path = currentPathRef.current;
+    const templateContent = path
+      ? await invoke("vault_read_note", { relativePath: path }).catch(() => content)
+      : content;
+    try {
+      await invoke("vault_save_as_template", { name, content: templateContent });
+    } catch (err) {
+      console.error("Failed to save template:", err);
     }
   }, []);
 
@@ -530,90 +675,97 @@ function App() {
     () => [
       {
         id: "new-note",
-        label: "New Note",
+        label: t("commandPalette.commands.newNote"),
         shortcut: undefined,
-        category: "File",
+        category: t("commandPalette.categories.file"),
         execute: () => handleNewNote(),
       },
       {
         id: "new-canvas",
-        label: "New Canvas",
+        label: t("commandPalette.commands.newCanvas"),
         shortcut: undefined,
-        category: "File",
+        category: t("commandPalette.categories.file"),
         execute: () => handleNewCanvas(),
       },
       {
         id: "open-daily-note",
-        label: "Open Daily Note",
+        label: t("commandPalette.commands.openDailyNote"),
         shortcut: undefined,
-        category: "Navigation",
+        category: t("commandPalette.categories.navigation"),
         execute: () => handleOpenDailyNote(),
       },
       {
         id: "toggle-graph",
-        label: "Toggle Graph View",
+        label: t("commandPalette.commands.toggleGraph"),
         shortcut: undefined,
-        category: "View",
+        category: t("commandPalette.categories.view"),
         execute: () => setShowGraph((prev) => !prev),
       },
       {
-        id: "open-template-selector",
-        label: "New Note from Template",
+        id: "toggle-outline",
+        label: t("commandPalette.commands.toggleOutline"),
         shortcut: undefined,
-        category: "File",
-        execute: () => setShowTemplateSelector(true),
+        category: t("commandPalette.categories.view"),
+        execute: () => setShowOutline((prev) => !prev),
+      },
+      {
+        id: "open-template-selector",
+        label: t("commandPalette.commands.newFromTemplate"),
+        shortcut: undefined,
+        category: t("commandPalette.categories.file"),
+        execute: () => setShowTemplateManager(true),
       },
       {
         id: "import-notes",
-        label: "Import Notes",
+        label: t("commandPalette.commands.importNotes"),
         shortcut: undefined,
-        category: "File",
+        category: t("commandPalette.categories.file"),
         execute: () => setShowImportWizard(true),
       },
       {
         id: "ai-assistant",
-        label: "AI Assistant",
+        label: t("commandPalette.commands.aiAssistant"),
         shortcut: undefined,
-        category: "AI",
+        category: t("commandPalette.categories.ai"),
         execute: () => setShowAIPanel(true),
       },
       {
         id: "calendar-view",
-        label: "Open Calendar",
+        label: t("commandPalette.commands.openCalendar"),
         shortcut: undefined,
-        category: "View",
+        category: t("commandPalette.categories.view"),
         execute: () => setShowCalendar(true),
       },
       {
         id: "plugin-market",
-        label: "Plugin Marketplace",
+        label: t("commandPalette.commands.pluginMarketplace"),
         shortcut: undefined,
-        category: "Plugins",
+        category: t("commandPalette.categories.plugins"),
         execute: () => setShowPluginMarket(true),
       },
       {
         id: "sql-query",
-        label: "SQL Query",
+        label: t("commandPalette.commands.sqlQuery"),
         shortcut: undefined,
-        category: "Developer",
+        category: t("commandPalette.categories.developer"),
         execute: () => setShowSqlQuery(true),
       },
       {
         id: "mind-map",
-        label: "Mind Map View",
+        label: t("commandPalette.commands.mindMapView"),
         shortcut: undefined,
-        category: "View",
+        category: t("commandPalette.categories.view"),
         execute: () => setShowMindMap(true),
       },
       {
         id: "table-view",
-        label: "Database View",
+        label: t("commandPalette.commands.databaseView"),
         shortcut: undefined,
-        category: "View",
+        category: t("commandPalette.categories.view"),
         execute: () => setShowTableView(true),
       },
     ],
-    [handleNewNote, handleNewCanvas, handleOpenDailyNote],
+    [handleNewNote, handleNewCanvas, handleOpenDailyNote, t],
   );
 
   const sidebarNode = (
@@ -629,7 +781,7 @@ function App() {
       selectedTag={selectedTag}
       onSelectTag={handleSelectTag}
       onOpenDailyNote={handleOpenDailyNote}
-      onOpenTemplateSelector={() => setShowTemplateSelector(true)}
+      onOpenTemplateSelector={() => setShowTemplateManager(true)}
       onImport={() => setShowImportWizard(true)}
       onSyncClick={() => setShowSyncSettings(true)}
       onOpenAI={() => setShowAIPanel(true)}
@@ -659,6 +811,21 @@ function App() {
                 {selectedPath}
               </p>
               <div className="flex items-center gap-2">
+                {!canvasPath && (
+                  <button
+                    onClick={() => setShowOutline((prev) => !prev)}
+                    className="px-2 py-1 rounded text-sm transition-colors"
+                    style={{
+                      backgroundColor: showOutline ? "var(--accent-color, #4f46e5)" : "var(--bg-hover)",
+                      color: showOutline ? "#fff" : "var(--text-secondary)",
+                      border: "1px solid var(--border-color)",
+                      cursor: "pointer",
+                    }}
+                    title={t("outline.title")}
+                  >
+                    {t("outline.title")}
+                  </button>
+                )}
                 <button
                   onClick={() => setShowGraph(true)}
                   className="px-2 py-1 rounded text-sm transition-colors"
@@ -682,8 +849,8 @@ function App() {
                 style={{ color: "var(--text-muted)" }}
               >
                 {vaultPath
-                  ? "Select a note from the sidebar"
-                  : "Open a vault to get started"}
+                  ? t("app.selectNote")
+                  : t("app.openVaultToStart")}
               </p>
               {vaultPath && (
                 <button
@@ -705,7 +872,7 @@ function App() {
         </header>
 
         {/* Editor area */}
-        <div className="flex-1 overflow-hidden p-0">
+        <div className="flex-1 overflow-hidden flex">
           {canvasPath ? (
             <CanvasEditor
               key={canvasPath}
@@ -713,7 +880,7 @@ function App() {
               onNavigateToNote={handleSelectFile}
             />
           ) : selectedPath ? (
-            <div className="h-full overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6">
               <Editor
                 key={selectedPath}
                 content={htmlContent}
@@ -724,13 +891,19 @@ function App() {
               />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex-1 flex items-center justify-center">
               <p style={{ color: "var(--text-muted)" }}>
                 {vaultPath
-                  ? "← Select a note or create a new one"
-                  : "← Open a vault folder to begin"}
+                  ? t("app.selectOrCreate")
+                  : t("app.openVaultToBegin")}
               </p>
             </div>
+          )}
+          {showOutline && !canvasPath && selectedPath && (
+            <OutlinePanel
+              content={noteContent}
+              onHeadingClick={handleHeadingClick}
+            />
           )}
         </div>
       </main>
@@ -747,6 +920,13 @@ function App() {
           onSelect={handleTemplateSelect}
           onSaveAsTemplate={handleSaveAsTemplate}
           onClose={() => setShowTemplateSelector(false)}
+        />
+      )}
+
+      {showTemplateManager && (
+        <TemplateManager
+          onSelectTemplate={handleTemplateManagerSelect}
+          onSaveTemplate={handleTemplateManagerSave}
         />
       )}
 
@@ -794,6 +974,7 @@ function App() {
           onTagsGenerated={handleAITagsGenerated}
           onSummaryGenerated={handleAISummaryGenerated}
           onWritingResult={handleAIWritingResult}
+          onNavigateToNote={(path) => setSelectedPath(path)}
           onClose={() => setShowAIPanel(false)}
         />
       )}

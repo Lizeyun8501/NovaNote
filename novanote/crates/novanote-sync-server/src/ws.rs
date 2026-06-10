@@ -4,6 +4,7 @@ use crate::server::AppState;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, Deserialize};
 use base64::Engine;
+use novanote_core::protobuf::SyncMessage;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ClientMessage {
@@ -27,6 +28,9 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
 
     let mut rx = tx.subscribe();
 
+    // Track whether the connected client prefers Protobuf (set on first binary message)
+    let mut _client_uses_protobuf = false;
+
     // Spawn task to forward broadcast messages to this websocket
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
@@ -41,10 +45,10 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(text) => {
+                // Legacy JSON text messages (backward compatibility)
                 if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                     if client_msg.msg_type == "update" {
                         if let Some(blob) = &client_msg.encrypted_blob {
-                            // Store the blob and broadcast to other clients
                             let blob_bytes = base64_decode(blob);
 
                             // Store in DB (simplified)
@@ -64,8 +68,50 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
                 }
             }
             Message::Binary(data) => {
-                // Binary message: relay to all other clients
-                let _ = tx.send(data.to_vec());
+                // Binary message: try Protobuf-prefixed SyncMessage first
+                if let Ok(sync_msg) = SyncMessage::decode_prefixed(&data) {
+                    _client_uses_protobuf = true;
+                    match sync_msg.msg_type.as_str() {
+                        "auth" => {
+                            // Handle authentication — in production, verify JWT
+                            let auth_ok = SyncMessage {
+                                msg_type: "auth_ok".to_string(),
+                                auth: None,
+                                auth_ok: Some(novanote_core::protobuf::AuthResponse {
+                                    ok: true,
+                                    error: None,
+                                }),
+                                step1: None,
+                                step2: None,
+                                awareness: None,
+                            };
+                            let response_bytes = auth_ok.encode_prefixed();
+                            let _ = tx.send(response_bytes);
+                        }
+                        "update" => {
+                            if let Some(step2) = &sync_msg.step2 {
+                                for update_bytes in &step2.updates {
+                                    // Store the update in DB (simplified)
+                                    let _ = sqlx::query(
+                                        "INSERT INTO doc_blobs (doc_id, user_id, vector_clock, encrypted_blob) VALUES ($1, $2, $3, $4)"
+                                    )
+                                    .bind(uuid::Uuid::parse_str(&step2.doc_id).unwrap_or_default())
+                                    .bind(uuid::Uuid::new_v4())
+                                    .bind(serde_json::Value::Null)
+                                    .bind(update_bytes.as_slice())
+                                    .execute(&state.db).await;
+
+                                    // Broadcast to ALL connected clients via channel
+                                    let _ = tx.send(update_bytes.clone());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Fallback: relay raw binary to all other clients
+                    let _ = tx.send(data.to_vec());
+                }
             }
             Message::Close(_) => {
                 break;

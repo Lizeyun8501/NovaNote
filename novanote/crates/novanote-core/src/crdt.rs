@@ -107,6 +107,18 @@ impl YDocHolder {
     }
 }
 
+impl Clone for YDocHolder {
+    fn clone(&self) -> Self {
+        let docs = self.docs.lock().unwrap();
+        let cloned: HashMap<String, Doc> = docs.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        YDocHolder {
+            docs: Mutex::new(cloned),
+        }
+    }
+}
+
 impl Default for YDocHolder {
     fn default() -> Self {
         Self::new()

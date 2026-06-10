@@ -25,6 +25,8 @@ pub enum VaultError {
     Sqlite(#[from] rusqlite::Error),
     #[error("Serde error: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("Tantivy error: {0}")]
+    Tantivy(#[from] tantivy::TantivyError),
     #[error("Already a vault")]
     AlreadyVault,
     #[error("Not a vault")]
@@ -265,7 +267,7 @@ pub struct SyncLog {
 #[cfg(feature = "native")]
 pub mod ai;
 #[cfg(feature = "native")]
-pub use ai::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult, generate_tags, generate_summary, writing_assist, check_ollama};
+pub use ai::{OllamaConfig, AITagResult, AISummaryResult, WritingAssistMode, WritingAssistResult, generate_tags, generate_summary, writing_assist, check_ollama, call_ollama};
 
 // OCR text recognition (native - uses reqwest for HTTP)
 #[cfg(feature = "native")]
@@ -283,7 +285,19 @@ pub use email_import::{parse_eml_file, parse_eml_content, email_to_markdown, Par
 #[cfg(feature = "native")]
 pub mod vector_search;
 #[cfg(feature = "native")]
-pub use vector_search::{generate_embedding, cosine_similarity, serialize_embedding, deserialize_embedding, VectorSearchResult, VectorSearchConfig};
+pub use vector_search::{generate_embedding, cosine_similarity, serialize_embedding, deserialize_embedding, VectorSearchResult, VectorSearchConfig, register_cosine_similarity_fn, create_vector_table, store_embedding_sql, vector_search_sql};
+
+// Tantivy advanced full-text search (native only)
+#[cfg(feature = "native")]
+pub mod tantivy_search;
+#[cfg(feature = "native")]
+pub use tantivy_search::{TantivyIndex, SearchHit};
+
+// RAG knowledge base Q&A (native - uses Ollama for embeddings + generation)
+#[cfg(feature = "native")]
+pub mod rag;
+#[cfg(feature = "native")]
+pub use rag::{RagConfig, RagAnswer, RagSource, rag_query};
 
 // Native-only modules (not available on WASM)
 #[cfg(feature = "native")]
@@ -338,6 +352,7 @@ pub mod integrations;
 pub use integrations::{
     GitHubConfig, GitHubIssue, github_list_issues, github_issue_to_markdown,
     SlackConfig, SlackMessage, slack_list_messages, slack_messages_to_markdown,
+    NotionConfig, NotionPage, notion_list_pages, notion_page_to_markdown,
 };
 
 #[cfg(feature = "native")]
@@ -366,10 +381,21 @@ pub mod multimodal;
 pub use multimodal::{MultiModalConfig, ImageAnalysisResult, analyze_image, describe_image, tag_image, image_to_note};
 
 #[cfg(feature = "native")]
+pub mod file_watcher;
+#[cfg(feature = "native")]
+pub use file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
+
+#[cfg(feature = "native")]
+pub mod export;
+#[cfg(feature = "native")]
+pub use export::{ExportFormat, ExportResult, export_to_markdown, export_to_html, export_to_pdf, export_note};
+
+#[cfg(feature = "native")]
 pub mod protobuf;
 #[cfg(feature = "native")]
 pub use protobuf::{
     SyncMessage, AuthRequest, AuthResponse, SyncStep1, SyncStep2,
     AwarenessUpdate, CursorState, DocEvent, DocEventType,
-    FrontendCommand, BackendResponse,
+    FrontendCommand, BackendResponse, EncryptedPayload,
+    PREFIX_PROTOBUF, PREFIX_JSON,
 };

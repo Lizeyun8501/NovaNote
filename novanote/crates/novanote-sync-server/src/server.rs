@@ -1,9 +1,10 @@
-use axum::{Router, routing::{get, post}, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade};
+use axum::{Router, routing::{get, post}, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade, middleware};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
 use crate::ws;
+use crate::auth;
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone)]
@@ -31,8 +32,14 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
         CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    "#).execute(&pool).await.ok();
+
+    // Add password_hash column if it doesn't exist (for existing databases)
+    sqlx::query(r#"
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''
     "#).execute(&pool).await.ok();
 
     sqlx::query(r#"
@@ -64,11 +71,18 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
         doc_channels: Arc::new(Mutex::new(HashMap::new())),
     };
 
-    let app = Router::new()
+    // Public routes (no auth required)
+    let public_routes = Router::new()
         .route("/health", get(health))
         .route("/ws/{doc_id}", get(ws_handler))
-        // REST API v1
+        // API v1 public routes
         .route("/api/v1/health", get(crate::api::api_health))
+        .route("/api/v1/auth/register", post(crate::api::api_register))
+        .route("/api/v1/auth/login", post(crate::api::api_login))
+        .route("/api/v1/totp/setup", post(crate::api::api_totp_setup));
+
+    // Protected routes (auth middleware applied)
+    let protected_routes = Router::new()
         .route("/api/v1/docs", get(crate::api::api_list_docs))
         .route("/api/v1/docs/{doc_id}", get(crate::api::api_get_doc))
         .route("/api/v1/docs/{doc_id}/push", post(crate::api::api_push))
@@ -76,8 +90,12 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
         .route("/api/v1/stats", get(crate::api::api_stats))
         .route("/api/v1/clip", post(crate::api::api_clip))
         .route("/api/v1/clip/wechat", post(crate::api::api_wechat_clip))
-        .route("/api/v1/totp/setup", post(crate::api::api_totp_setup))
         .route("/api/v1/totp/verify", post(crate::api::api_totp_verify))
+        .layer(middleware::from_fn_with_state(state.clone(), auth::auth_middleware));
+
+    let app = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await

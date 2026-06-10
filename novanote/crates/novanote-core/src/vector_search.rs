@@ -1,7 +1,12 @@
 //! Vector search module - Embedding-based semantic search using Ollama
 //! Generates embeddings via Ollama API and performs cosine similarity search
+//! Also provides SQL-based vector search using custom rusqlite functions
+//! (sqlite-vec style approach with brute-force cosine similarity in SQL)
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+
+use crate::VaultError;
 
 /// Configuration for vector search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +117,128 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 
     dot_product / (norm_a * norm_b)
+}
+
+// ============================================================
+// SQL-based vector search (sqlite-vec style)
+// Uses custom rusqlite functions for cosine similarity in SQL
+// ============================================================
+
+/// Register the `cosine_similarity` custom SQL function on a connection.
+/// This allows SQL queries like:
+///   SELECT *, cosine_similarity(embedding, ?1) AS score FROM vec_table ORDER BY score DESC
+pub fn register_cosine_similarity_fn(conn: &Connection) -> Result<(), VaultError> {
+    conn.create_scalar_function(
+        "cosine_similarity",
+        2,
+        rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx: &rusqlite::functions::Context| {
+            let blob_a: Vec<u8> = ctx.get(0)?;
+            let blob_b: Vec<u8> = ctx.get(1)?;
+            let a = deserialize_embedding(&blob_a);
+            let b = deserialize_embedding(&blob_b);
+            Ok(cosine_similarity(&a, &b))
+        },
+    )?;
+    Ok(())
+}
+
+/// Create a vector storage table for embeddings using a flat BLOB column approach.
+/// This mimics sqlite-vec's `vec0` virtual table pattern but uses standard SQL tables
+/// with a custom cosine_similarity function for brute-force search.
+///
+/// Table schema:
+/// - note_id TEXT PRIMARY KEY
+/// - embedding BLOB NOT NULL
+pub fn create_vector_table(
+    conn: &Connection,
+    table_name: &str,
+    dim: usize,
+) -> Result<(), VaultError> {
+    let sql = format!(
+        "CREATE TABLE IF NOT EXISTS {table} (
+            note_id TEXT PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            dim INTEGER NOT NULL DEFAULT {dim}
+        )",
+        table = table_name,
+        dim = dim,
+    );
+    conn.execute_batch(&sql)?;
+
+    // Register the cosine similarity function if not already registered
+    register_cosine_similarity_fn(conn)?;
+
+    Ok(())
+}
+
+/// Store an embedding vector in a vector table
+pub fn store_embedding_sql(
+    conn: &Connection,
+    table: &str,
+    note_id: &str,
+    embedding: &[f32],
+) -> Result<(), VaultError> {
+    let blob = serialize_embedding(embedding);
+    let dim = embedding.len() as i64;
+    let sql = format!(
+        "INSERT INTO {table} (note_id, embedding, dim)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(note_id) DO UPDATE SET
+            embedding = excluded.embedding, dim = excluded.dim",
+        table = table,
+    );
+    conn.execute(&sql, params![note_id, blob, dim])?;
+    Ok(())
+}
+
+/// Perform vector similarity search using SQL with the custom cosine_similarity function.
+/// Returns results sorted by similarity descending, limited to `limit` results.
+pub fn vector_search_sql(
+    conn: &Connection,
+    table: &str,
+    query_embedding: &[f32],
+    limit: usize,
+) -> Result<Vec<VectorSearchResult>, VaultError> {
+    // Ensure the cosine_similarity function is registered
+    register_cosine_similarity_fn(conn)?;
+
+    let query_blob = serialize_embedding(query_embedding);
+    let sql = format!(
+        "SELECT v.note_id, cosine_similarity(v.embedding, ?1) AS score
+         FROM {table} v
+         WHERE cosine_similarity(v.embedding, ?1) > 0.3
+         ORDER BY score DESC
+         LIMIT ?2",
+        table = table,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![query_blob, limit as i64], |row| {
+        let path: String = row.get(0)?;
+        let similarity: f32 = row.get(1)?;
+        Ok((path, similarity))
+    })?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        if let Ok((relative_path, similarity)) = row {
+            // Try to get the title from the notes table
+            let title: String = conn
+                .query_row(
+                    "SELECT title FROM notes WHERE relative_path = ?1",
+                    params![relative_path],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
+            results.push(VectorSearchResult {
+                relative_path,
+                title,
+                similarity,
+            });
+        }
+    }
+
+    Ok(results)
 }
 
 #[cfg(test)]

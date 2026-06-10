@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import type { NoteMeta } from "../../types";
 
@@ -48,6 +49,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function SearchBar({ onSelect, open: openProp, onOpenChange }: SearchBarProps) {
+  const { t } = useTranslation();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp ?? openInternal;
   const setOpen = useCallback(
@@ -250,9 +252,9 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              searchMode === "regex" ? "Search with regex..." :
-              searchMode === "semantic" ? "Semantic search (natural language)..." :
-              "Search notes..."
+              searchMode === "regex" ? t("search.regexPlaceholder") :
+              searchMode === "semantic" ? t("search.semanticPlaceholder") :
+              t("search.placeholder")
             }
             className="flex-1 bg-transparent border-none outline-none text-base"
             style={{ color: "var(--text-primary)" }}
@@ -275,7 +277,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                   color: searchMode === mode ? "#fff" : "var(--text-muted)",
                   border: "1px solid " + (searchMode === mode ? "var(--accent-color, #6366f1)" : "var(--border-color)"),
                 }}
-                title={mode === "fts" ? "Full-text search" : mode === "regex" ? "Regex search" : "AI semantic search"}
+                title={mode === "fts" ? t("search.fullTextSearch") : mode === "regex" ? t("search.regexSearch") : t("search.semanticSearch")}
               >
                 {mode === "fts" ? "FTS" : mode === "regex" ? ".*" : "AI"}
               </button>
@@ -323,7 +325,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                   color: "var(--text-primary)",
                 }}
               />
-              <span style={{ color: "var(--text-muted)" }}>Press Enter to search</span>
+              <span style={{ color: "var(--text-muted)" }}>{t("search.pressEnterToSearch")}</span>
             </div>
           )}
 
@@ -334,7 +336,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 className="px-4 py-3 text-sm"
                 style={{ color: "var(--text-muted)" }}
               >
-                Searching...
+                {t("search.searching")}
               </div>
             )}
 
@@ -343,7 +345,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 className="px-4 py-3 text-sm"
                 style={{ color: "var(--text-muted)" }}
               >
-                Searching semantically...
+                {t("search.searchingSemantically")}
               </div>
             )}
 
@@ -433,7 +435,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 className="px-4 py-3 text-sm"
                 style={{ color: "var(--text-muted)" }}
               >
-                No results found.
+                {t("search.noResults")}
               </div>
             )}
 
@@ -483,8 +485,8 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 style={{ color: "var(--text-muted)" }}
               >
                 {searchMode === "semantic"
-                  ? "Type a natural language query and press Enter."
-                  : "Type to search your notes..."}
+                  ? t("search.semanticHint")
+                  : t("search.typeToSearch")}
               </div>
             )}
           </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { fuzzyMatch } from "../../utils/fuzzyMatch";
 
 export interface Command {
@@ -16,6 +17,7 @@ interface CommandPaletteProps {
 }
 
 export default function CommandPalette({ isOpen, onClose, commands }: CommandPaletteProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -121,7 +123,7 @@ export default function CommandPalette({ isOpen, onClose, commands }: CommandPal
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a command..."
+            placeholder={t("commandPalette.placeholder")}
             className="flex-1 bg-transparent border-none outline-none text-base"
             style={{ color: "var(--text-primary)" }}
           />
@@ -144,7 +146,7 @@ export default function CommandPalette({ isOpen, onClose, commands }: CommandPal
               className="px-4 py-3 text-sm"
               style={{ color: "var(--text-muted)" }}
             >
-              No matching commands.
+              {t("commandPalette.noMatchingCommands")}
             </div>
           )}
           {filtered.length > 0 && (
