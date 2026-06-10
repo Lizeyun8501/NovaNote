@@ -48,9 +48,9 @@ impl S3Backend {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
-            "application/octet-stream".parse().unwrap(),
+            reqwest::header::HeaderValue::from_static("application/octet-stream"),
         );
-        self.sign_request("PUT", &url, &mut headers, &body);
+        self.sign_request("PUT", &url, &mut headers, &body)?;
 
         let resp = self
             .client
@@ -79,7 +79,7 @@ impl S3Backend {
         let url = self.build_url(&key);
 
         let mut headers = reqwest::header::HeaderMap::new();
-        self.sign_request("GET", &url, &mut headers, &[]);
+        self.sign_request("GET", &url, &mut headers, &[])?;
 
         let resp = self
             .client
@@ -112,7 +112,7 @@ impl S3Backend {
         let url = self.build_url("");
 
         let mut headers = reqwest::header::HeaderMap::new();
-        self.sign_request("HEAD", &url, &mut headers, &[]);
+        self.sign_request("HEAD", &url, &mut headers, &[])?;
 
         let resp = self
             .client
@@ -131,7 +131,7 @@ impl S3Backend {
         let url = self.build_list_url(&prefix);
 
         let mut headers = reqwest::header::HeaderMap::new();
-        self.sign_request("GET", &url, &mut headers, &[]);
+        self.sign_request("GET", &url, &mut headers, &[])?;
 
         let resp = self
             .client
@@ -218,20 +218,20 @@ impl S3Backend {
         url: &str,
         headers: &mut reqwest::header::HeaderMap,
         body: &[u8],
-    ) {
-        let parsed = url::Url::parse(url).expect("Invalid URL");
-        let host = parsed.host_str().expect("No host in URL");
+    ) -> Result<(), VaultError> {
+        let parsed = url::Url::parse(url).map_err(|e| VaultError::Other(format!("Invalid S3 URL: {}", e)))?;
+        let host = parsed.host_str().ok_or_else(|| VaultError::Other("No host in S3 URL".into()))?;
 
         let now = chrono::Utc::now();
         let date_stamp = now.format("%Y%m%d").to_string();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
 
         // Add required headers for AWS V4 signing
-        headers.insert("host", host.parse().unwrap());
-        headers.insert("x-amz-date", amz_date.parse().unwrap());
+        headers.insert("host", host.parse().map_err(|e| VaultError::Other(format!("Invalid host header: {}", e)))?);
+        headers.insert("x-amz-date", amz_date.parse().map_err(|e| VaultError::Other(format!("Invalid date header: {}", e)))?);
         headers.insert(
             "x-amz-content-sha256",
-            sha256_hex(body).parse().unwrap(),
+            sha256_hex(body).parse().map_err(|e| VaultError::Other(format!("Invalid sha256 header: {}", e)))?,
         );
 
         // Build canonical headers list (sorted by lowercase header name)
@@ -317,12 +317,12 @@ impl S3Backend {
             &date_stamp,
             &self.config.region,
             "s3",
-        );
+        )?;
 
         // Calculate signature
         let signature = {
             let mut mac =
-                HmacSha256::new_from_slice(&signing_key).expect("HMAC accepts any key size");
+                HmacSha256::new_from_slice(&signing_key).map_err(|e| VaultError::Other(format!("HMAC error: {}", e)))?;
             mac.update(string_to_sign.as_bytes());
             to_hex(&mac.finalize().into_bytes())
         };
@@ -333,7 +333,8 @@ impl S3Backend {
             self.config.access_key, credential_scope, signed_headers, signature
         );
 
-        headers.insert("Authorization", auth_header.parse().unwrap());
+        headers.insert("Authorization", auth_header.parse().map_err(|e| VaultError::Other(format!("Invalid auth header: {}", e)))?);
+        Ok(())
     }
 }
 
@@ -435,7 +436,8 @@ fn block_on_async<F: std::future::Future>(fut: F) -> F::Output {
         }
         Err(_) => {
             // Not inside a runtime – create a temporary one.
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            let rt = tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime — system resource exhaustion");
             rt.block_on(fut)
         }
     }
@@ -449,10 +451,11 @@ fn sha256_hex(data: &[u8]) -> String {
     to_hex(&Sha256::digest(data))
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>, VaultError> {
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|e| VaultError::Other(format!("HMAC init error: {}", e)))?;
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 fn derive_signing_key(
@@ -460,12 +463,12 @@ fn derive_signing_key(
     date_stamp: &str,
     region: &str,
     service: &str,
-) -> Vec<u8> {
-    let k_date = hmac_sha256(format!("AWS4{}", secret_key).as_bytes(), date_stamp.as_bytes());
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, service.as_bytes());
-    let k_signing = hmac_sha256(&k_service, b"aws4_request");
-    k_signing
+) -> Result<Vec<u8>, VaultError> {
+    let k_date = hmac_sha256(format!("AWS4{}", secret_key).as_bytes(), date_stamp.as_bytes())?;
+    let k_region = hmac_sha256(&k_date, region.as_bytes())?;
+    let k_service = hmac_sha256(&k_region, service.as_bytes())?;
+    let k_signing = hmac_sha256(&k_service, b"aws4_request")?;
+    Ok(k_signing)
 }
 
 /// URI-encode for AWS canonical URI. Preserves '/' characters.

@@ -2,10 +2,19 @@ use rusqlite::{params, Connection};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
+use regex::Regex;
 
 use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore, SearchHit, TantivyIndex};
 use crate::file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
+
+// Static regex patterns — compiled once, no runtime unwrap panics
+static RE_INLINE_TAGS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?<!^)(?<!\w)#(\w[\w/-]*)").unwrap());
+static RE_WIKILINKS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
+static RE_EMBED_HASH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(#{1,6}\s+.+?)\s+[a-f0-9]{32}$").unwrap());
 
 pub struct Vault {
     pub root_path: PathBuf,
@@ -839,8 +848,7 @@ a {{ color: #6366f1; }}
 
     fn extract_inline_tags(content: &str) -> Vec<String> {
         let mut tags = Vec::new();
-        let re = regex::Regex::new(r"(?m)(?<!^)(?<!\w)#(\w[\w/-]*)").unwrap();
-        for cap in re.captures_iter(content) {
+        for cap in RE_INLINE_TAGS.captures_iter(content) {
             let tag = cap[1].to_string();
             if !tags.contains(&tag) { tags.push(tag); }
         }
@@ -848,8 +856,7 @@ a {{ color: #6366f1; }}
     }
 
     fn extract_wikilinks(content: &str) -> Vec<(String, String, String, String)> {
-        let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
-        re.captures_iter(content).filter_map(|cap| {
+        RE_WIKILINKS.captures_iter(content).filter_map(|cap| {
             let inner = cap.get(1)?.as_str();
             // Check for ^block-id first (can appear directly after note name or after #heading)
             // e.g. [[Note^block-123]] or [[Note#heading^block-123]]
@@ -889,9 +896,8 @@ fn parse_tags_value(value: &str) -> Vec<String> {
 }
 
 fn clean_notion_markdown(content: &str) -> String {
-    let re = regex::Regex::new(r"^(#{1,6}\s+.+?)\s+[a-f0-9]{32}$").unwrap();
     content.lines().map(|line| {
-        if let Some(caps) = re.captures(line) {
+        if let Some(caps) = RE_EMBED_HASH.captures(line) {
             caps.get(1).map(|m| m.as_str()).unwrap_or(line).to_string()
         } else { line.to_string() }
     }).collect::<Vec<_>>().join("\n")

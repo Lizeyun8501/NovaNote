@@ -26,10 +26,10 @@ import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/
 import { buildFileTree } from "./utils/buildFileTree";
 import { MobileLayout } from "./components/layout/MobileLayout";
 import type { NoteMeta, FileTreeNode } from "./types";
+import { useVault } from "./hooks/useVault";
+import { useUIState } from "./hooks/useUIState";
 import "./App.css";
 import "./styles/responsive.css";
-
-const VAULT_STORAGE_KEY = "novanote-vault";
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(false);
@@ -45,31 +45,68 @@ function useMediaQuery(query: string): boolean {
 
 function App() {
   const { t } = useTranslation();
-  const [vaultPath, setVaultPath] = useState<string | null>(null);
-  const [notes, setNotes] = useState<NoteMeta[]>([]);
-  const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [noteContent, setNoteContent] = useState<string>("");
-  const [htmlContent, setHtmlContent] = useState<string>("");
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [showGraph, setShowGraph] = useState(false);
+  const vault = useVault();
+  const ui = useUIState();
+
+  // Destructure vault state — preserves all existing code references
+  const {
+    vaultPath,
+    setVaultPath,
+    notes,
+    setNotes,
+    fileTree,
+    setFileTree,
+    selectedPath,
+    setSelectedPath,
+    noteContent,
+    setNoteContent,
+    htmlContent,
+    setHtmlContent,
+    selectedTag,
+    setSelectedTag,
+    currentPathRef,
+    openVault,
+    handleOpenVault,
+    refreshNotes,
+  } = vault;
+
+  // Destructure UI state — preserves all existing code references
+  const {
+    showGraph,
+    setShowGraph,
+    showTemplateSelector,
+    setShowTemplateSelector,
+    showTemplateManager,
+    setShowTemplateManager,
+    showOutline,
+    setShowOutline,
+    showImportWizard,
+    setShowImportWizard,
+    canvasPath,
+    setCanvasPath,
+    commandPaletteOpen,
+    setCommandPaletteOpen,
+    showSyncSettings,
+    setShowSyncSettings,
+    showPasswordSetup,
+    setShowPasswordSetup,
+    showAIPanel,
+    setShowAIPanel,
+    showCalendar,
+    setShowCalendar,
+    showPluginMarket,
+    setShowPluginMarket,
+    showSqlQuery,
+    setShowSqlQuery,
+    showMindMap,
+    setShowMindMap,
+    showTableView,
+    setShowTableView,
+    aiSelectedText,
+    setAiSelectedText,
+  } = ui;
+
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const currentPathRef = useRef<string | null>(null);
-  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
-  const [showTemplateManager, setShowTemplateManager] = useState(false);
-  const [showOutline, setShowOutline] = useState(false);
-  const [showImportWizard, setShowImportWizard] = useState(false);
-  const [canvasPath, setCanvasPath] = useState<string | null>(null);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [showSyncSettings, setShowSyncSettings] = useState(false);
-  const [showPasswordSetup, setShowPasswordSetup] = useState(false);
-  const [showAIPanel, setShowAIPanel] = useState(false);
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [showPluginMarket, setShowPluginMarket] = useState(false);
-  const [showSqlQuery, setShowSqlQuery] = useState(false);
-  const [showMindMap, setShowMindMap] = useState(false);
-  const [showTableView, setShowTableView] = useState(false);
-  const [aiSelectedText, setAiSelectedText] = useState<string>("");
   const isMobile = useMediaQuery("(max-width: 768px)");
 
   // Cmd/Ctrl+P keyboard shortcut to open command palette
@@ -83,38 +120,6 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
-
-  // Open vault by path
-  const openVault = useCallback(async (path: string) => {
-    try {
-      await invoke("vault_open", { path });
-      setVaultPath(path);
-
-      // Re-scan and list notes
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-    } catch (err) {
-      console.error("Failed to open vault:", err);
-    }
-  }, []);
-
-  // Handle open vault button
-  const handleOpenVault = useCallback(async () => {
-    const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (stored) {
-      await openVault(stored);
-    }
-  }, [openVault]);
-
-  // Auto-open last vault on mount
-  useEffect(() => {
-    const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (stored) {
-      openVault(stored);
-    }
-  }, [openVault]);
 
   // File watcher: start when vault is opened, poll for external changes
   useEffect(() => {

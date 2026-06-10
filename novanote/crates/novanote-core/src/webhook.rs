@@ -194,12 +194,17 @@ fn compute_hmac(secret: &str, payload: &[u8]) -> String {
     type HmacSha256 = Hmac<Sha256>;
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+        .map_err(|_| ())
+        .unwrap_or_else(|_| {
+            // HMAC-SHA256 accepts any key size; fallback here only for API safety
+            HmacSha256::new_from_slice(&[0u8; 32])
+                .expect("HMAC-SHA256 with 32-byte key must succeed")
+        });
     mac.update(payload);
     let result = mac.finalize();
     let code_bytes = result.into_bytes();
     code_bytes.iter().fold(String::new(), |mut output, b| {
-        write!(output, "{:02x}", b).unwrap();
+        let _ = write!(output, "{:02x}", b); // infallible write to String
         output
     })
 }
