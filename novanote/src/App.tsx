@@ -25,7 +25,7 @@ import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
 import { MobileLayout } from "./components/layout/MobileLayout";
-import type { NoteMeta, FileTreeNode } from "./types";
+import type { NoteMeta } from "./types";
 import { useVault } from "./hooks/useVault";
 import { useUIState } from "./hooks/useUIState";
 import "./App.css";
@@ -51,7 +51,6 @@ function App() {
   // Destructure vault state — preserves all existing code references
   const {
     vaultPath,
-    setVaultPath,
     notes,
     setNotes,
     fileTree,
@@ -65,9 +64,7 @@ function App() {
     selectedTag,
     setSelectedTag,
     currentPathRef,
-    openVault,
     handleOpenVault,
-    refreshNotes,
   } = vault;
 
   // Destructure UI state — preserves all existing code references
