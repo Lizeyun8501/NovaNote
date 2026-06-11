@@ -45,6 +45,9 @@ struct SharedState {
 pub struct SyncEngine {
     config: Arc<Mutex<SyncConfig>>,
     master_key: Arc<Mutex<Option<[u8; 32]>>>,
+    /// Salt used for key derivation. Must be preserved so that `unlock()`
+    /// can re-derive the same master key from the same password.
+    salt: Arc<Mutex<Option<[u8; 32]>>>,
     offline_queue: Arc<Mutex<VecDeque<PendingUpdate>>>,
     shared: Arc<Mutex<SharedState>>,
     /// Channel to send commands to the WebSocket background task
@@ -68,6 +71,7 @@ impl SyncEngine {
                 jwt_token: String::new(),
             })),
             master_key: Arc::new(Mutex::new(None)),
+            salt: Arc::new(Mutex::new(None)),
             offline_queue: Arc::new(Mutex::new(VecDeque::new())),
             shared: Arc::new(Mutex::new(SharedState {
                 connected: false,
@@ -108,20 +112,41 @@ impl SyncEngine {
         self.config.lock().unwrap().enabled
     }
 
-    /// Set master password and derive encryption key
+    /// Set master password and derive encryption key.
+    /// The derived salt is stored so that `unlock()` can re-derive the same key.
     pub fn set_master_password(&self, password: &str) {
-        let (key, _salt) = derive_key(password, None);
+        let (key, salt) = derive_key(password, None);
         let mut mk = self.master_key.lock().unwrap();
         *mk = Some(*key);
+        *self.salt.lock().unwrap() = Some(salt);
         self.config.lock().unwrap().master_password_set = true;
     }
 
-    /// Unlock with master password (for reconnecting)
+    /// Unlock with master password (for reconnecting).
+    /// Re-derives the key using the salt stored by `set_master_password()`.
+    /// Returns `false` if no salt has been set (i.e. `set_master_password` was never called).
     pub fn unlock(&self, password: &str) -> bool {
-        let (key, _salt) = derive_key(password, None);
-        let mut mk = self.master_key.lock().unwrap();
-        *mk = Some(*key);
+        let salt_guard = self.salt.lock().unwrap();
+        let stored_salt = match *salt_guard {
+            Some(ref s) => *s,
+            None => return false,
+        };
+        drop(salt_guard);
+
+        let (key, _) = derive_key(password, Some(&stored_salt));
+        *self.master_key.lock().unwrap() = Some(*key);
         true
+    }
+
+    /// Get the stored key derivation salt (for persistence across app restarts).
+    /// Returns `None` if `set_master_password` has not been called.
+    pub fn get_salt(&self) -> Option<[u8; 32]> {
+        *self.salt.lock().unwrap()
+    }
+
+    /// Restore a previously persisted salt so that `unlock` can re-derive the correct key.
+    pub fn set_salt(&self, salt: [u8; 32]) {
+        *self.salt.lock().unwrap() = Some(salt);
     }
 
     /// Check if unlocked

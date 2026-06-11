@@ -43,6 +43,8 @@ pub struct VaultConfig {
     #[serde(default)]
     pub encryption_key_encrypted: Option<String>,  // Encrypted master key (base64), stored encrypted with user password
     #[serde(default)]
+    pub sync_salt: Option<String>,  // Base64-encoded Argon2id salt for sync key derivation
+    #[serde(default)]
     pub settings: VaultSettings,
 }
 
@@ -328,6 +330,12 @@ pub use sync_s3::{S3Config, S3Backend};
 // Native-only vault implementation
 #[cfg(feature = "native")]
 mod vault_impl;
+#[cfg(feature = "native")]
+mod vault_db;
+mod vault_import;
+#[cfg(feature = "native")]
+pub use vault_db::VaultDb;
+pub use vault_import::{sanitize_filename, clean_notion_markdown};
 #[cfg(feature = "native")]
 pub use vault_impl::Vault;
 

@@ -1,16 +1,42 @@
-use rusqlite::{params, Connection};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
-use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore, SearchHit, TantivyIndex};
+use crate::{
+    VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult,
+    NoteStore, GraphData, CrdtStore, SearchHit, TantivyIndex,
+    vault_db::VaultDb,
+    vault_import::{self, sanitize_filename, clean_notion_markdown},
+};
 use crate::file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
 
+/// Helper: acquire the `tokio::sync::Mutex` lock in a sync context by blocking
+/// the current thread. This is safe because we are always inside a tokio runtime
+/// (Tauri commands run on the tokio runtime), and the lock is held only for the
+/// duration of a single operation.
+fn block_on<F, R>(f: F) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    tokio::runtime::Handle::current().block_on(f)
+}
+
+/// Top-level Vault container for a note repository.
+///
+/// Combines multiple sub-services:
+/// - `db: VaultDb` — Database CRUD, indexing, tags, links, search
+/// - `ydoc_holder: YDocHolder` — CRDT collaborative editing
+/// - `sync_engine: SyncEngine` — Remote sync
+/// - `crdt_store: CrdtStore` — Persistent CRDT storage
+/// - `file_watcher` — Live file system monitoring
+/// - `tantivy_index` — Advanced full-text search
+///
+/// All database operations are delegated to `VaultDb` (extracted from the old God Object).
 pub struct Vault {
     pub root_path: PathBuf,
     pub config: VaultConfig,
-    conn: Mutex<Connection>,
+    db: VaultDb,
     ydoc_holder: YDocHolder,
     pub sync_engine: SyncEngine,
     crdt_store: CrdtStore,
@@ -40,6 +66,7 @@ impl Vault {
                 .unwrap_or_else(|| "Untitled".to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),
             encryption_key_encrypted: None,
+            sync_salt: None,
             settings: Default::default(),
         };
 
@@ -47,9 +74,7 @@ impl Vault {
         fs::write(&config_path, config_json)?;
 
         let db_path = vault_dir.join("index.db");
-        let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        Self::init_db(&conn)?;
+        let db = VaultDb::open(&db_path)?;
 
         let crdt_path = vault_dir.join("crdt.db");
         let crdt_store = CrdtStore::open(&crdt_path)?;
@@ -60,7 +85,7 @@ impl Vault {
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
-            conn: Mutex::new(conn),
+            db,
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
             crdt_store,
@@ -78,9 +103,7 @@ impl Vault {
         let config_json = fs::read_to_string(&config_path)?;
         let config: VaultConfig = serde_json::from_str(&config_json)?;
         let db_path = root.join(".vault").join("index.db");
-        let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        Self::init_db(&conn)?;
+        let db = VaultDb::open(&db_path)?;
 
         let crdt_path = root.join(".vault").join("crdt.db");
         let crdt_store = CrdtStore::open(&crdt_path)?;
@@ -91,7 +114,7 @@ impl Vault {
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
-            conn: Mutex::new(conn),
+            db,
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
             crdt_store,
@@ -99,66 +122,6 @@ impl Vault {
             event_rx: Mutex::new(None),
             tantivy_index: Mutex::new(tantivy_index),
         })
-    }
-
-    fn init_db(conn: &Connection) -> Result<(), VaultError> {
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS notes (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                relative_path TEXT NOT NULL UNIQUE,
-                tags TEXT DEFAULT '[]',
-                content TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-                title, content, content=notes, content_rowid=rowid
-            );
-            CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
-                INSERT INTO notes_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
-            END;
-            CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
-                INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
-            END;
-            CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
-                INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
-                INSERT INTO notes_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
-            END;
-            CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
-            );
-            CREATE TABLE IF NOT EXISTS note_tags (
-                note_id TEXT NOT NULL,
-                tag_name TEXT NOT NULL,
-                PRIMARY KEY (note_id, tag_name),
-                FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_name);
-            CREATE TABLE IF NOT EXISTS links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_path TEXT NOT NULL,
-                target_path TEXT NOT NULL,
-                link_text TEXT NOT NULL,
-                target_heading TEXT DEFAULT '',
-                target_block_id TEXT DEFAULT '',
-                FOREIGN KEY (source_path) REFERENCES notes(relative_path) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_path);
-            CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_path);
-            CREATE TABLE IF NOT EXISTS embeddings (
-                relative_path TEXT PRIMARY KEY,
-                embedding BLOB NOT NULL,
-                generated_at TEXT NOT NULL,
-                model TEXT NOT NULL,
-                FOREIGN KEY (relative_path) REFERENCES notes(relative_path) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_embeddings_path ON embeddings(relative_path);
-            ",
-        )?;
-        Ok(())
     }
 
     pub fn full_scan(&self) -> Result<Vec<NoteMeta>, VaultError> {
@@ -175,10 +138,7 @@ impl Vault {
                 }
             }
         }
-        {
-            let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-            conn.execute_batch("INSERT INTO notes_fts(notes_fts) VALUES ('rebuild');")?;
-        }
+        self.db.rebuild_fts()?;
         Ok(results)
     }
 
@@ -202,39 +162,16 @@ impl Vault {
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(&tags)?;
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        conn.execute(
-            "INSERT INTO notes (id, title, relative_path, tags, content, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(relative_path) DO UPDATE SET
-                title = excluded.title, tags = excluded.tags, content = excluded.content, updated_at = excluded.updated_at",
-            params![id, title, relative_path, tags_json, content, created_at, modified],
-        )?;
-        let actual_id: String = conn.query_row(
-            "SELECT id FROM notes WHERE relative_path = ?1",
-            params![relative_path], |row| row.get(0),
-        ).unwrap_or(id.clone());
-        conn.execute("DELETE FROM links WHERE source_path = ?1", params![relative_path])?;
-        let wikilinks = Self::extract_wikilinks(&content);
-        for (target_path, link_text, target_heading, target_block_id) in &wikilinks {
-            conn.execute(
-                "INSERT INTO links (source_path, target_path, link_text, target_heading, target_block_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![relative_path, target_path, link_text, target_heading, target_block_id],
-            )?;
-        }
-        // Update tags: delete old associations, insert new
-        conn.execute("DELETE FROM note_tags WHERE note_id = ?1", params![actual_id])?;
-        for tag in &tags {
-            conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", params![tag])?;
-            conn.execute("INSERT INTO note_tags (note_id, tag_name) VALUES (?1, ?2)", params![actual_id, tag])?;
-        }
+        self.db.upsert_note(&id, &title, &relative_path, &tags_json, &content, &created_at, &modified)?;
+        let actual_id = self.db.get_id_by_path(&relative_path)?;
+        self.db.replace_links(&relative_path, &Self::extract_wikilinks(&content))?;
+        self.db.update_tags(&actual_id, &tags)?;
 
         // Also index in Tantivy if available
-        if let Ok(mut tantivy_guard) = self.tantivy_index.lock() {
-            if let Some(ref mut tantivy) = *tantivy_guard {
-                let _ = tantivy.add_document(&relative_path, &title, &content, &tags);
-                let _ = tantivy.commit();
-            }
+        let mut tantivy_guard = block_on(self.tantivy_index.lock());
+        if let Some(ref mut tantivy) = *tantivy_guard {
+            let _ = tantivy.add_document(&relative_path, &title, &content, &tags);
+            let _ = tantivy.commit();
         }
 
         Ok(NoteMeta {
@@ -243,16 +180,14 @@ impl Vault {
     }
 
     pub fn remove_file(&self, relative_path: &str) -> Result<(), VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        conn.execute("DELETE FROM notes WHERE relative_path = ?1", params![relative_path])?;
+        self.db.delete_note(relative_path)?;
         self.ydoc_holder.remove(relative_path);
 
         // Also delete from Tantivy if available
-        if let Ok(mut tantivy_guard) = self.tantivy_index.lock() {
-            if let Some(ref mut tantivy) = *tantivy_guard {
-                let _ = tantivy.delete_document(relative_path);
-                let _ = tantivy.commit();
-            }
+        let mut tantivy_guard = block_on(self.tantivy_index.lock());
+        if let Some(ref mut tantivy) = *tantivy_guard {
+            let _ = tantivy.delete_document(relative_path);
+            let _ = tantivy.commit();
         }
 
         Ok(())
@@ -265,7 +200,7 @@ impl Vault {
     }
 
     pub fn watch_start(&self) -> Result<(), VaultError> {
-        let mut watcher_guard = self.file_watcher.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut watcher_guard = block_on(self.file_watcher.lock());
         if watcher_guard.is_some() {
             return Ok(()); // Already watching
         }
@@ -278,32 +213,32 @@ impl Vault {
 
         *watcher_guard = Some(watcher);
 
-        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut rx_guard = block_on(self.event_rx.lock());
         *rx_guard = Some(rx);
 
         Ok(())
     }
 
     pub fn watch_stop(&self) -> Result<(), VaultError> {
-        let mut watcher_guard = self.file_watcher.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut watcher_guard = block_on(self.file_watcher.lock());
         if let Some(ref mut watcher) = *watcher_guard {
             watcher.stop()?;
         }
         *watcher_guard = None;
 
-        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut rx_guard = block_on(self.event_rx.lock());
         *rx_guard = None;
 
         Ok(())
     }
 
     pub fn watch_events(&self) -> Option<tokio::sync::mpsc::Receiver<FileChangeEvent>> {
-        let mut rx_guard = self.event_rx.lock().ok()?;
+        let mut rx_guard = block_on(self.event_rx.lock());
         rx_guard.take()
     }
 
     pub fn watch_poll_events(&self) -> Result<Vec<FileChangeEvent>, VaultError> {
-        let mut rx_guard = self.event_rx.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let mut rx_guard = block_on(self.event_rx.lock());
         let rx = match rx_guard.as_mut() {
             Some(rx) => rx,
             None => return Ok(Vec::new()),
@@ -317,66 +252,31 @@ impl Vault {
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<NoteMeta>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sanitized = query.replace('"', "\"\"");
-        let fts_query = format!("\"{}\"", sanitized);
-        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at
-                   FROM notes n INNER JOIN notes_fts fts ON n.rowid = fts.rowid
-                   WHERE notes_fts MATCH ?1 ORDER BY rank LIMIT 50";
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![fts_query], |row| {
-            Ok(NoteMeta {
-                id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        })?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.search_fts(query)
     }
 
     pub fn search_regex(&self, pattern: &str) -> Result<Vec<NoteMeta>, VaultError> {
-        let re = regex::Regex::new(pattern)
-            .map_err(|e| VaultError::Other(format!("Invalid regex: {}", e)))?;
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT id, title, relative_path, tags, created_at, updated_at FROM notes";
-        let mut stmt = conn.prepare(sql).map_err(VaultError::Sqlite)?;
-        let notes = stmt.query_map([], |row| {
-            Ok(NoteMeta {
-                id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        }).map_err(VaultError::Sqlite)?
-        .filter_map(|r| r.ok())
-        .filter(|note| re.is_match(&note.title) || {
-            conn.query_row("SELECT content FROM notes WHERE id = ?1", [&note.id], |row| row.get::<_, String>(0))
-                .map(|c| re.is_match(&c)).unwrap_or(false)
-        })
-        .collect();
-        Ok(notes)
+        self.db.search_regex(pattern)
     }
 
     /// Advanced search using Tantivy query syntax (e.g., `title:foo AND content:bar`).
     /// Falls back to FTS5 if Tantivy is not available.
     pub fn search_advanced(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, VaultError> {
         // Try Tantivy first
-        if let Ok(tantivy_guard) = self.tantivy_index.lock() {
-            if let Some(ref tantivy) = *tantivy_guard {
-                return tantivy.search(query, limit);
-            }
+        let tantivy_guard = block_on(self.tantivy_index.lock());
+        if let Some(ref tantivy) = *tantivy_guard {
+            return tantivy.search(query, limit);
         }
 
         // Fallback: use FTS5 and convert results to SearchHit
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let conn = self.db.conn();
         let sanitized = query.replace('"', "\"\"");
         let fts_query = format!("\"{}\"", sanitized);
         let sql = "SELECT n.relative_path, n.title, fts.rank
                    FROM notes n INNER JOIN notes_fts fts ON n.rowid = fts.rowid
                    WHERE notes_fts MATCH ?1 ORDER BY rank LIMIT ?";
         let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![fts_query, limit as i64], |row| {
+        let rows = stmt.query_map(rusqlite::params![fts_query, limit as i64], |row: &rusqlite::Row<'_>| {
             Ok(SearchHit {
                 path: row.get(0)?,
                 title: row.get(1)?,
@@ -390,24 +290,15 @@ impl Vault {
 
     /// Store an embedding vector for a note
     pub fn store_embedding(&self, relative_path: &str, embedding: &[f32], model: &str) -> Result<(), VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
         let embedding_blob = crate::vector_search::serialize_embedding(embedding);
-        let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO embeddings (relative_path, embedding, generated_at, model)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(relative_path) DO UPDATE SET
-                embedding = excluded.embedding, generated_at = excluded.generated_at, model = excluded.model",
-            rusqlite::params![relative_path, embedding_blob, now, model],
-        )?;
-        Ok(())
+        self.db.store_embedding(relative_path, &embedding_blob, model)
     }
 
     /// Perform semantic search using stored embeddings and cosine similarity.
     /// `query_embedding` is the embedding vector of the search query (generated externally).
     /// Uses SQL-based vector search with custom cosine_similarity function (sqlite-vec style).
     pub fn semantic_search_with_embedding(&self, query_embedding: &[f32]) -> Result<Vec<VectorSearchResult>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
+        let conn = self.db.conn();
 
         // Try SQL-based vector search first (sqlite-vec style with custom function)
         if let Ok(results) = crate::vector_search::vector_search_sql(&conn, "embeddings_vec", query_embedding, 20) {
@@ -427,7 +318,7 @@ impl Vault {
                    ORDER BY score DESC
                    LIMIT 20";
         let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![query_blob], |row| {
+        let rows = stmt.query_map(rusqlite::params![query_blob], |row: &rusqlite::Row<'_>| {
             let path: String = row.get(0)?;
             let similarity: f32 = row.get(1)?;
             let title: Option<String> = row.get(2)?;
@@ -447,16 +338,12 @@ impl Vault {
 
     /// Check if semantic search is available (has indexed embeddings)
     pub fn has_embeddings(&self) -> Result<bool, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
-        Ok(count > 0)
+        self.db.has_embeddings()
     }
 
     /// Get count of indexed embeddings
     pub fn embedding_count(&self) -> Result<i64, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
-        Ok(count)
+        self.db.embedding_count()
     }
 
     /// Perform a RAG (Retrieval-Augmented Generation) query against the vault.
@@ -499,89 +386,23 @@ impl Vault {
     }
 
     pub fn list_notes(&self) -> Result<Vec<NoteMeta>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, title, relative_path, tags, created_at, updated_at FROM notes ORDER BY updated_at DESC")?;
-        let rows = stmt.query_map([], |row| {
-            Ok(NoteMeta {
-                id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        })?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.list_notes()
     }
 
     pub fn get_backlinks(&self, relative_path: &str) -> Result<Vec<NoteMeta>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at
-                   FROM notes n INNER JOIN links l ON n.relative_path = l.source_path
-                   WHERE l.target_path = ?1 ORDER BY n.updated_at DESC";
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![relative_path], |row| {
-            Ok(NoteMeta {
-                id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        })?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.get_backlinks(relative_path)
     }
 
     pub fn get_backlinks_with_blocks(&self, relative_path: &str) -> Result<Vec<(NoteMeta, String, String)>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at,
-                          l.target_heading, l.target_block_id
-                   FROM notes n INNER JOIN links l ON n.relative_path = l.source_path
-                   WHERE l.target_path = ?1 ORDER BY n.updated_at DESC";
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![relative_path], |row| {
-            Ok((
-                NoteMeta {
-                    id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                    tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                    created_at: row.get(4)?, updated_at: row.get(5)?,
-                },
-                row.get::<_, String>(6)?,
-                row.get::<_, String>(7)?,
-            ))
-        })?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.get_backlinks_with_blocks(relative_path)
     }
 
     pub fn list_tags(&self) -> Result<Vec<(String, i32)>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT t.name, COUNT(nt.note_id) as count FROM tags t
-                   LEFT JOIN note_tags nt ON t.name = nt.tag_name GROUP BY t.name ORDER BY count DESC, t.name ASC";
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)))?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.list_tags()
     }
 
     pub fn get_notes_by_tag(&self, tag: &str) -> Result<Vec<NoteMeta>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT n.id, n.title, n.relative_path, n.tags, n.created_at, n.updated_at
-                   FROM notes n INNER JOIN note_tags nt ON n.id = nt.note_id
-                   WHERE nt.tag_name = ?1 ORDER BY n.updated_at DESC";
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![tag], |row| {
-            Ok(NoteMeta {
-                id: row.get(0)?, title: row.get(1)?, relative_path: row.get(2)?,
-                tags: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        })?;
-        let mut results = Vec::new();
-        for row in rows { results.push(row?); }
-        Ok(results)
+        self.db.get_notes_by_tag(tag)
     }
 
     pub fn list_templates(&self) -> Result<Vec<String>, VaultError> {
@@ -641,7 +462,7 @@ impl Vault {
                     .map(|l| l.trim_start_matches("# ").trim())
                     .unwrap_or_else(|| entry.path().file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled")).to_string();
                 let cleaned = clean_notion_markdown(&content);
-                let dest = self.root_path.join(format!("{}.md", sanitize_filename(&title)));
+                let dest = self.root_path.join(format!("{}.md", vault_import::sanitize_filename(&title)));
                 fs::write(&dest, cleaned)?;
             }
         }
@@ -684,13 +505,7 @@ a {{ color: #6366f1; }}
     }
 
     pub fn get_all_links(&self) -> Result<Vec<(String, String)>, VaultError> {
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let sql = "SELECT source_path, target_path FROM links";
-        let mut stmt = conn.prepare(sql).map_err(VaultError::Sqlite)?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-            .map_err(VaultError::Sqlite)?;
-        let result: Vec<(String, String)> = rows.filter_map(|r| r.ok()).collect();
-        Ok(result)
+        self.db.get_all_links()
     }
 
     pub fn read_note(&self, path: &str) -> Result<String, VaultError> {
@@ -726,75 +541,21 @@ a {{ color: #6366f1; }}
             fs::create_dir_all(parent)?;
         }
         fs::rename(&old_full, &new_full)?;
-        self.remove_file(old_path)?;
+        self.remove_file(old_path);
         self.index_file(&new_full)?;
         Ok(())
     }
 
     pub fn get_graph_data(&self) -> Result<GraphData, VaultError> {
         let notes = self.list_notes()?;
-        let links = self.get_all_links()?;
-        let nodes: Vec<GraphNode> = notes.into_iter().map(|n| GraphNode {
-            id: n.id,
-            title: n.title,
-            path: n.relative_path,
-        }).collect();
-        let edges: Vec<GraphEdge> = links.into_iter().map(|(source, target)| GraphEdge {
-            source,
-            target,
-        }).collect();
-        Ok(GraphData { nodes, edges })
+        self.db.get_graph_data(&notes)
     }
 
     /// Execute a read-only SQL query against the vault database.
     /// Returns results as JSON arrays for flexibility.
     /// Only SELECT statements are allowed for safety.
     pub fn query_sql(&self, sql: &str) -> Result<Vec<serde_json::Value>, VaultError> {
-        // Safety check: only allow SELECT statements
-        let trimmed = sql.trim().to_uppercase();
-        if !trimmed.starts_with("SELECT") {
-            return Err(VaultError::Other("Only SELECT queries are allowed".to_string()));
-        }
-        // Block dangerous keywords
-        let dangerous = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "ATTACH", "PRAGMA"];
-        for keyword in &dangerous {
-            if trimmed.contains(keyword) {
-                return Err(VaultError::Other(format!("Keyword '{}' is not allowed in queries", keyword)));
-            }
-        }
-
-        let conn = self.conn.lock().map_err(|e| VaultError::Other(e.to_string()))?;
-        let mut stmt = conn.prepare(sql)?;
-        
-        let column_count = stmt.column_count();
-        let column_names: Vec<String> = (0..column_count)
-            .map(|i| stmt.column_name(i).map(|s| s.to_string()).map_err(VaultError::Sqlite))
-            .collect::<Result<Vec<String>, VaultError>>()?;
-
-        let rows = stmt.query_map([], |row| {
-            let mut map: serde_json::Map<String, serde_json::Value> = serde_json::Map::with_capacity(column_count);
-            for (i, name) in column_names.iter().enumerate() {
-                let value: serde_json::Value = match row.get_ref(i) {
-                    Ok(rusqlite::types::ValueRef::Null) => serde_json::Value::Null,
-                    Ok(rusqlite::types::ValueRef::Integer(n)) => serde_json::json!(n),
-                    Ok(rusqlite::types::ValueRef::Real(f)) => serde_json::json!(f),
-                    Ok(rusqlite::types::ValueRef::Text(s)) => {
-                        let text = String::from_utf8_lossy(s).to_string();
-                        serde_json::json!(text)
-                    }
-                    Ok(rusqlite::types::ValueRef::Blob(_)) => serde_json::json!("[blob]"),
-                    Err(_) => serde_json::Value::Null,
-                };
-                map.insert(name.clone(), value);
-            }
-            Ok(serde_json::Value::Object(map))
-        })?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
-        Ok(results)
+        self.db.query_sql(sql)
     }
 
     pub fn is_vault(path: &Path) -> bool {
@@ -886,20 +647,6 @@ fn parse_tags_value(value: &str) -> Vec<String> {
             .filter(|s| !s.is_empty()).collect();
     }
     value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
-}
-
-fn clean_notion_markdown(content: &str) -> String {
-    let re = regex::Regex::new(r"^(#{1,6}\s+.+?)\s+[a-f0-9]{32}$").unwrap();
-    content.lines().map(|line| {
-        if let Some(caps) = re.captures(line) {
-            caps.get(1).map(|m| m.as_str()).unwrap_or(line).to_string()
-        } else { line.to_string() }
-    }).collect::<Vec<_>>().join("\n")
-}
-
-fn sanitize_filename(name: &str) -> String {
-    name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
-        .collect::<String>().trim().to_string()
 }
 
 impl NoteStore for Vault {
