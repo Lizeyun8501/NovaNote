@@ -14,11 +14,11 @@ use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStat
 use novanote_tauri;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 pub struct AppState {
-    pub vault: Mutex<Option<Vault>>,
+    pub vault: Mutex<Option<Arc<Vault>>>,
     pub plugin_host: Mutex<PluginHost>,
 }
 
@@ -62,7 +62,7 @@ fn greet(name: &str) -> String {
 fn vault_create(state: State<AppState>, path: String) -> Result<String, String> {
     let vault = Vault::create(Path::new(&path)).map_err(|e| e.to_string())?;
     let result = format!("Vault created: {}", vault.config.id);
-    *state.vault.lock().map_err(|e| e.to_string())? = Some(vault);
+    *state.vault.lock().map_err(|e| e.to_string())? = Some(Arc::new(vault));
     Ok(result)
 }
 
@@ -70,7 +70,7 @@ fn vault_create(state: State<AppState>, path: String) -> Result<String, String> 
 fn vault_open(state: State<AppState>, path: String) -> Result<String, String> {
     let vault = Vault::open(Path::new(&path)).map_err(|e| e.to_string())?;
     let result = format!("Vault opened: {} ({})", vault.config.name, vault.config.id);
-    *state.vault.lock().map_err(|e| e.to_string())? = Some(vault);
+    *state.vault.lock().map_err(|e| e.to_string())? = Some(Arc::new(vault));
     Ok(result)
 }
 
@@ -601,8 +601,11 @@ async fn ai_rag_query(
         max_context_chars: max_context_chars.unwrap_or(4000),
     };
 
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
+    // Clone the Arc out of the Mutex and drop the guard before awaiting.
+    let vault: Arc<Vault> = {
+        let guard = state.vault.lock().map_err(|e| e.to_string())?;
+        guard.as_ref().ok_or("No vault opened")?.clone()
+    };
     vault.rag_search(&query, &config).await.map_err(|e| e.to_string())
 }
 

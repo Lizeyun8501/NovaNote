@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::{VaultError, VaultConfig, NoteMeta, YDocHolder, SyncEngine, VectorSearchResult, NoteStore, GraphData, GraphNode, GraphEdge, CrdtStore, SearchHit, TantivyIndex};
 use crate::file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
@@ -10,13 +10,31 @@ use crate::file_watcher::{FileWatcher, FileWatcherConfig, FileChangeEvent};
 pub struct Vault {
     pub root_path: PathBuf,
     pub config: VaultConfig,
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     ydoc_holder: YDocHolder,
     pub sync_engine: SyncEngine,
-    crdt_store: CrdtStore,
+    crdt_store: Arc<CrdtStore>,
     file_watcher: Mutex<Option<FileWatcher>>,
     event_rx: Mutex<Option<tokio::sync::mpsc::Receiver<FileChangeEvent>>>,
     tantivy_index: Mutex<Option<TantivyIndex>>,
+}
+
+// Make Vault cheaply cloneable so it can live behind Arc<Mutex<Option<Vault>>>.
+// All shared state is wrapped in Arc, so cloning is just bumping refcounts.
+impl Clone for Vault {
+    fn clone(&self) -> Self {
+        Self {
+            root_path: self.root_path.clone(),
+            config: self.config.clone(),
+            conn: Arc::clone(&self.conn),
+            ydoc_holder: self.ydoc_holder.clone(),
+            sync_engine: self.sync_engine.clone(),
+            crdt_store: self.crdt_store.clone(),
+            file_watcher: Mutex::new(None), // file watcher is not cloneable
+            event_rx: Mutex::new(None),
+            tantivy_index: Mutex::new(None),
+        }
+    }
 }
 
 impl Vault {
@@ -60,10 +78,10 @@ impl Vault {
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
-            crdt_store,
+            crdt_store: Arc::new(crdt_store),
             file_watcher: Mutex::new(None),
             event_rx: Mutex::new(None),
             tantivy_index: Mutex::new(tantivy_index),
@@ -91,10 +109,10 @@ impl Vault {
         Ok(Vault {
             root_path: root.to_path_buf(),
             config,
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             ydoc_holder: YDocHolder::new(),
             sync_engine: SyncEngine::default(),
-            crdt_store,
+            crdt_store: Arc::new(crdt_store),
             file_watcher: Mutex::new(None),
             event_rx: Mutex::new(None),
             tantivy_index: Mutex::new(tantivy_index),

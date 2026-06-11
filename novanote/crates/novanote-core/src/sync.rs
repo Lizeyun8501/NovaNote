@@ -51,10 +51,38 @@ pub struct SyncEngine {
     ws_cmd_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<WsCommand>>>,
     /// Watch channel to signal the WebSocket task to shut down
     ws_shutdown_tx: Mutex<Option<watch::Sender<bool>>>,
-    /// Handle for the WebSocket background task
+    /// Handle for the WebSocket background task (not cloneable - resets on clone)
     ws_task_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// Handle for the sync loop background task
+    /// Handle for the sync loop background task (not cloneable - resets on clone)
     sync_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+// Manual Clone impl: Arc<Mutex<...>> fields bump refcounts, but JoinHandles aren't
+// Clone, so reset them to None. Cloned engines won't see the original's background
+// tasks, which is fine for the read-only RAG use case.
+impl Clone for SyncEngine {
+    fn clone(&self) -> Self {
+        Self {
+            config: Arc::clone(&self.config),
+            master_key: Arc::clone(&self.master_key),
+            offline_queue: Arc::clone(&self.offline_queue),
+            shared: Arc::clone(&self.shared),
+            ws_cmd_tx: Mutex::new(
+                self.ws_cmd_tx
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().cloned()),
+            ),
+            ws_shutdown_tx: Mutex::new(
+                self.ws_shutdown_tx
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().cloned()),
+            ),
+            ws_task_handle: Mutex::new(None),
+            sync_loop_handle: Mutex::new(None),
+        }
+    }
 }
 
 impl SyncEngine {
