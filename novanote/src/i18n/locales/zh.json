@@ -309,6 +309,13 @@
       "databaseView": "数据库视图"
     }
   },
+  "mobile": {
+    "files": "文件",
+    "search": "搜索",
+    "ai": "AI",
+    "calendar": "日历",
+    "more": "更多"
+  },
   "common": {
     "loading": "加载中...",
     "error": "错误",

@@ -1022,7 +1022,13 @@ function App() {
 
   if (isMobile) {
     return (
-      <MobileLayout sidebar={sidebarNode}>
+      <MobileLayout
+        sidebar={sidebarNode}
+        onOpenSearch={() => setCommandPaletteOpen(true)}
+        onOpenAI={() => setShowAIPanel(true)}
+        onOpenCalendar={() => setShowCalendar(true)}
+        onOpenMore={() => setCommandPaletteOpen(true)}
+      >
         {contentNode}
       </MobileLayout>
     );

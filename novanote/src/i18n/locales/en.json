@@ -309,6 +309,13 @@
       "databaseView": "Database View"
     }
   },
+  "mobile": {
+    "files": "Files",
+    "search": "Search",
+    "ai": "AI",
+    "calendar": "Calendar",
+    "more": "More"
+  },
   "common": {
     "loading": "Loading...",
     "error": "Error",
