@@ -1,7 +1,7 @@
-use axum::{Router, routing::{get, post}, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade, middleware};
+use axum::{Router, routing::{get, post}, Json, extract::Path, extract::State, extract::ws::WebSocketUpgrade, middleware, Extension};
+use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use tokio::sync::broadcast;
 use crate::ws;
 use crate::auth;
@@ -10,10 +10,9 @@ use serde::{Serialize, Deserialize};
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::PgPool,
-    pub redis: redis::Client,
     pub jwt_secret: String,
     // Channel per doc_id for broadcasting updates to connected clients
-    pub doc_channels: Arc<Mutex<HashMap<String, broadcast::Sender<Vec<u8>>>>>,
+    pub doc_channels: Arc<RwLock<HashMap<String, broadcast::Sender<Vec<u8>>>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,7 +21,7 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secret: &str) {
+pub async fn run(database_url: &str, bind_addr: &str, jwt_secret: &str) {
     // Connect to PostgreSQL
     let pool = sqlx::PgPool::connect(database_url).await
         .expect("Failed to connect to PostgreSQL");
@@ -61,20 +60,19 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
         CREATE INDEX IF NOT EXISTS idx_doc_blobs_user_id ON doc_blobs(user_id)
     "#).execute(&pool).await.ok();
 
-    let redis_client = redis::Client::open(redis_url)
-        .expect("Failed to connect to Redis");
+    sqlx::query(r#"
+        CREATE INDEX IF NOT EXISTS idx_doc_blobs_doc_user ON doc_blobs(doc_id, user_id)
+    "#).execute(&pool).await.ok();
 
     let state = AppState {
         db: pool,
-        redis: redis_client,
         jwt_secret: jwt_secret.to_string(),
-        doc_channels: Arc::new(Mutex::new(HashMap::new())),
+        doc_channels: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/health", get(health))
-        .route("/ws/{doc_id}", get(ws_handler))
         // API v1 public routes
         .route("/api/v1/health", get(crate::api::api_health))
         .route("/api/v1/auth/register", post(crate::api::api_register))
@@ -83,6 +81,7 @@ pub async fn run(database_url: &str, redis_url: &str, bind_addr: &str, jwt_secre
 
     // Protected routes (auth middleware applied)
     let protected_routes = Router::new()
+        .route("/ws/{doc_id}", get(ws_handler))
         .route("/api/v1/docs", get(crate::api::api_list_docs))
         .route("/api/v1/docs/{doc_id}", get(crate::api::api_get_doc))
         .route("/api/v1/docs/{doc_id}/push", post(crate::api::api_push))
@@ -116,7 +115,8 @@ async fn health() -> Json<HealthResponse> {
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::AuthUser>,
     Path(doc_id): Path<String>,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, state, doc_id))
+    ws.on_upgrade(move |socket| ws::handle_socket(socket, state, doc_id, auth_user))
 }

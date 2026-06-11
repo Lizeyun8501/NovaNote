@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import { Editor } from "./components/editor";
 import Sidebar from "./components/sidebar/Sidebar";
 import SearchBar from "./components/search/SearchBar";
@@ -23,9 +22,10 @@ import MindMapView from "./components/mindmap/MindMapView";
 import TableView from "./components/tableview/TableView";
 import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
-import { buildFileTree } from "./utils/buildFileTree";
 import { MobileLayout } from "./components/layout/MobileLayout";
 import type { NoteMeta, FileTreeNode } from "./types";
+import { buildFileTree } from "./utils/buildFileTree";
+import { refreshVaultData, readNoteContent, writeNoteContent } from "./api/vault";
 import "./App.css";
 import "./styles/responsive.css";
 
@@ -90,11 +90,9 @@ function App() {
       await invoke("vault_open", { path });
       setVaultPath(path);
 
-      // Re-scan and list notes
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
     } catch (err) {
       console.error("Failed to open vault:", err);
     }
@@ -142,9 +140,7 @@ function App() {
               if (relativePath && relativePath === currentPathRef.current) {
                 // Currently selected file was modified externally - reload content
                 try {
-                  const content: string = await invoke("vault_read_note", {
-                    relativePath: relativePath,
-                  });
+                  const content = await readNoteContent(relativePath);
                   setNoteContent(content);
                   setHtmlContent(content);
                 } catch (readErr) {
@@ -153,10 +149,9 @@ function App() {
               }
               // Re-index the modified file
               try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
+                const data = await refreshVaultData();
+                setNotes(data.notes);
+                setFileTree(data.fileTree);
               } catch (scanErr) {
                 console.error("Failed to re-scan after modification:", scanErr);
               }
@@ -165,10 +160,9 @@ function App() {
             case "Created":
               // New file created externally - refresh the file list
               try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
+                const data = await refreshVaultData();
+                setNotes(data.notes);
+                setFileTree(data.fileTree);
               } catch (scanErr) {
                 console.error("Failed to re-scan after creation:", scanErr);
               }
@@ -183,10 +177,9 @@ function App() {
                 setNoteContent("");
               }
               try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
+                const data = await refreshVaultData();
+                setNotes(data.notes);
+                setFileTree(data.fileTree);
               } catch (scanErr) {
                 console.error("Failed to re-scan after deletion:", scanErr);
               }
@@ -210,10 +203,9 @@ function App() {
                 }
               }
               try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
+                const data = await refreshVaultData();
+                setNotes(data.notes);
+                setFileTree(data.fileTree);
               } catch (scanErr) {
                 console.error("Failed to re-scan after rename:", scanErr);
               }
@@ -247,9 +239,7 @@ function App() {
     setCanvasPath(null);
 
     try {
-      const content: string = await invoke("vault_read_note", {
-        relativePath: path,
-      });
+      const content: string = await readNoteContent(path);
       setSelectedPath(path);
       currentPathRef.current = path;
       setNoteContent(content);
@@ -269,7 +259,7 @@ function App() {
 
       try {
         // Try to read the note first
-        await invoke("vault_read_note", { relativePath: targetPath });
+        await readNoteContent(targetPath);
         // Note exists, navigate to it
         await handleSelectFile(targetPath);
       } catch {
@@ -281,15 +271,11 @@ function App() {
 
         try {
           const content = `# ${target}\n\n`;
-          await invoke("vault_write_note", {
-            relativePath: targetPath,
-            content,
-          });
+          await writeNoteContent(targetPath, content);
           // Re-scan to update the list
-          await invoke("vault_scan");
-          const noteList: NoteMeta[] = await invoke("vault_list_notes");
-          setNotes(noteList);
-          setFileTree(buildFileTree(noteList));
+          const data = await refreshVaultData();
+          setNotes(data.notes);
+          setFileTree(data.fileTree);
           // Navigate to the new note
           await handleSelectFile(targetPath);
         } catch (writeErr) {
@@ -315,10 +301,7 @@ function App() {
       }
       saveTimerRef.current = setTimeout(async () => {
         try {
-          await invoke("vault_write_note", {
-            relativePath: path,
-            content: markdown,
-          });
+          await writeNoteContent(path, markdown);
         } catch (err) {
           console.error("Failed to save note:", err);
         }
@@ -330,9 +313,7 @@ function App() {
   // Handle search result selection
   const handleSearchSelect = useCallback(async (note: NoteMeta) => {
     try {
-      const content: string = await invoke("vault_read_note", {
-        relativePath: note.relative_path,
-      });
+      const content: string = await readNoteContent(note.relative_path);
       setSelectedPath(note.relative_path);
       currentPathRef.current = note.relative_path;
       setNoteContent(content);
@@ -347,9 +328,9 @@ function App() {
     try {
       await invoke("vault_rename_note", { oldRelativePath: oldPath, newRelativePath: newPath });
       // Refresh tree
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
       if (selectedPath === oldPath) {
         setSelectedPath(newPath);
         currentPathRef.current = newPath;
@@ -363,9 +344,9 @@ function App() {
   const handleDelete = useCallback(async (path: string) => {
     try {
       await invoke("vault_delete_note", { relativePath: path });
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
       if (selectedPath === path) {
         setSelectedPath(null);
         currentPathRef.current = null;
@@ -407,10 +388,9 @@ function App() {
       });
 
       // Re-scan to update the list
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      const vaultData = await refreshVaultData();
+      setNotes(vaultData.notes);
+      setFileTree(vaultData.fileTree);
 
       // Select the new canvas
       setCanvasPath(fileName);
@@ -449,7 +429,7 @@ function App() {
 
     try {
       // Try to read the daily note
-      const content: string = await invoke("vault_read_note", { relativePath: dailyPath });
+      const content: string = await readNoteContent(dailyPath);
       setSelectedPath(dailyPath);
       currentPathRef.current = dailyPath;
       setNoteContent(content);
@@ -458,11 +438,10 @@ function App() {
       // Daily note doesn't exist, create it with template
       try {
         const content = getDailyNoteTemplate();
-        await invoke("vault_write_note", { relativePath: dailyPath, content });
-        await invoke("vault_scan");
-        const noteList: NoteMeta[] = await invoke("vault_list_notes");
-        setNotes(noteList);
-        setFileTree(buildFileTree(noteList));
+        await writeNoteContent(dailyPath, content);
+        const data = await refreshVaultData();
+        setNotes(data.notes);
+        setFileTree(data.fileTree);
         setSelectedPath(dailyPath);
         currentPathRef.current = dailyPath;
         setNoteContent(content);
@@ -482,11 +461,10 @@ function App() {
     const fileName = `Untitled-${Date.now()}.md`;
 
     try {
-      await invoke("vault_write_note", { relativePath: fileName, content });
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      await writeNoteContent(fileName, content);
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
       setSelectedPath(fileName);
       currentPathRef.current = fileName;
       setNoteContent(content);
@@ -503,7 +481,7 @@ function App() {
 
     const templateName = path.replace(/\.md$/, "");
     try {
-      const content: string = await invoke("vault_read_note", { relativePath: path });
+      const content: string = await readNoteContent(path);
       await invoke("vault_save_as_template", { name: templateName, content });
     } catch (err) {
       console.error("Failed to save as template:", err);
@@ -521,11 +499,10 @@ function App() {
     const fileName = `Untitled-${Date.now()}.md`;
 
     try {
-      await invoke("vault_write_note", { relativePath: fileName, content: noteContent });
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      await writeNoteContent(fileName, noteContent);
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
       setSelectedPath(fileName);
       currentPathRef.current = fileName;
       setNoteContent(noteContent);
@@ -539,7 +516,7 @@ function App() {
   const handleTemplateManagerSave = useCallback(async (name: string, content: string) => {
     const path = currentPathRef.current;
     const templateContent = path
-      ? await invoke("vault_read_note", { relativePath: path }).catch(() => content)
+      ? await readNoteContent(path).catch(() => content)
       : content;
     try {
       await invoke("vault_save_as_template", { name, content: templateContent });
@@ -554,7 +531,7 @@ function App() {
       // Add tags to current note by updating its content with frontmatter tags
       const path = currentPathRef.current;
       if (!path) return;
-      const content: string = await invoke("vault_read_note", { relativePath: path });
+      const content: string = await readNoteContent(path);
       // Add or update tags in frontmatter
       let newContent = content;
       const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -570,11 +547,11 @@ function App() {
         const tagsLine = `---\ntags: [${tags.map((t) => `"${t}"`).join(", ")}]\n---\n\n`;
         newContent = tagsLine + content;
       }
-      await invoke("vault_write_note", { relativePath: path, content: newContent });
+      await writeNoteContent(path, newContent);
       // Refresh notes
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+      const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
     } catch (err) {
       console.error("Failed to apply AI tags:", err);
     }
@@ -585,7 +562,7 @@ function App() {
     try {
       const path = currentPathRef.current;
       if (!path) return;
-      const content: string = await invoke("vault_read_note", { relativePath: path });
+      const content: string = await readNoteContent(path);
       // Add summary to frontmatter
       let newContent = content;
       const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -596,7 +573,7 @@ function App() {
         const summaryLine = `---\nsummary: "${summary.replace(/"/g, '\\"')}"\n---\n\n`;
         newContent = summaryLine + content;
       }
-      await invoke("vault_write_note", { relativePath: path, content: newContent });
+      await writeNoteContent(path, newContent);
     } catch (err) {
       console.error("Failed to apply AI summary:", err);
     }
@@ -618,7 +595,7 @@ function App() {
       const dailyPath = `daily/${parts[0]}-${parts[1]}-${parts[2]}.md`;
 
       try {
-        const content: string = await invoke("vault_read_note", { relativePath: dailyPath });
+        const content: string = await readNoteContent(dailyPath);
         setSelectedPath(dailyPath);
         currentPathRef.current = dailyPath;
         setNoteContent(content);
@@ -628,11 +605,10 @@ function App() {
         // Create the daily note
         try {
           const template = getDailyNoteTemplate();
-          await invoke("vault_write_note", { relativePath: dailyPath, content: template });
-          await invoke("vault_scan");
-          const noteList: NoteMeta[] = await invoke("vault_list_notes");
-          setNotes(noteList);
-          setFileTree(buildFileTree(noteList));
+          await writeNoteContent(dailyPath, template);
+          const data = await refreshVaultData();
+          setNotes(data.notes);
+          setFileTree(data.fileTree);
           setSelectedPath(dailyPath);
           currentPathRef.current = dailyPath;
           setNoteContent(template);
@@ -662,9 +638,9 @@ function App() {
   // Handle import complete - refresh the file tree
   const handleImportComplete = useCallback(async (_importedNotes: NoteMeta[]) => {
     try {
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
+   const data = await refreshVaultData();
+      setNotes(data.notes);
+      setFileTree(data.fileTree);
     } catch (err) {
       console.error("Failed to refresh notes after import:", err);
     }

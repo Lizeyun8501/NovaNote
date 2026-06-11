@@ -1,6 +1,7 @@
 use axum::extract::ws::{WebSocket, Message};
 use tokio::sync::broadcast;
 use crate::server::AppState;
+use crate::auth::AuthUser;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, Deserialize};
 use base64::Engine;
@@ -15,11 +16,11 @@ struct ClientMessage {
     vector_clock: Option<serde_json::Value>,
 }
 
-pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
+pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String, auth_user: AuthUser) {
     let (mut sender, mut receiver) = socket.split();
 
     let tx = {
-        let mut channels = state.doc_channels.lock().unwrap();
+        let mut channels = state.doc_channels.write().await;
         channels.entry(doc_id.clone()).or_insert_with(|| {
             let (tx, _) = broadcast::channel(100);
             tx
@@ -51,12 +52,13 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
                         if let Some(blob) = &client_msg.encrypted_blob {
                             let blob_bytes = base64_decode(blob);
 
-                            // Store in DB (simplified)
+                            // Store in DB with the authenticated user_id
+                            let doc_uuid = uuid::Uuid::parse_str(&client_msg.doc_id).unwrap_or_default();
                             let _ = sqlx::query(
                                 "INSERT INTO doc_blobs (doc_id, user_id, vector_clock, encrypted_blob) VALUES ($1, $2, $3, $4)"
                             )
-                            .bind(uuid::Uuid::parse_str(&client_msg.doc_id).unwrap_or_default())
-                            .bind(uuid::Uuid::new_v4())
+                            .bind(doc_uuid)
+                            .bind(auth_user.user_id)
                             .bind(client_msg.vector_clock.unwrap_or(serde_json::Value::Null))
                             .bind(&blob_bytes)
                             .execute(&state.db).await;
@@ -73,7 +75,7 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
                     _client_uses_protobuf = true;
                     match sync_msg.msg_type.as_str() {
                         "auth" => {
-                            // Handle authentication — in production, verify JWT
+                            // Authentication already handled by middleware — just confirm
                             let auth_ok = SyncMessage {
                                 msg_type: "auth_ok".to_string(),
                                 auth: None,
@@ -91,12 +93,13 @@ pub async fn handle_socket(socket: WebSocket, state: AppState, doc_id: String) {
                         "update" => {
                             if let Some(step2) = &sync_msg.step2 {
                                 for update_bytes in &step2.updates {
-                                    // Store the update in DB (simplified)
+                                    // Store the update in DB with the authenticated user_id
+                                    let doc_uuid = uuid::Uuid::parse_str(&step2.doc_id).unwrap_or_default();
                                     let _ = sqlx::query(
                                         "INSERT INTO doc_blobs (doc_id, user_id, vector_clock, encrypted_blob) VALUES ($1, $2, $3, $4)"
                                     )
-                                    .bind(uuid::Uuid::parse_str(&step2.doc_id).unwrap_or_default())
-                                    .bind(uuid::Uuid::new_v4())
+                                    .bind(doc_uuid)
+                                    .bind(auth_user.user_id)
                                     .bind(serde_json::Value::Null)
                                     .bind(update_bytes.as_slice())
                                     .execute(&state.db).await;

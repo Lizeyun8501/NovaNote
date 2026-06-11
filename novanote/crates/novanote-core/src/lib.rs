@@ -331,6 +331,12 @@ mod vault_impl;
 #[cfg(feature = "native")]
 pub use vault_impl::Vault;
 
+// Extracted search module (native only, uses SQLite + Tantivy)
+#[cfg(feature = "native")]
+mod search;
+#[cfg(feature = "native")]
+pub use search::VaultSearch;
+
 #[cfg(feature = "native")]
 pub mod audit_log;
 #[cfg(feature = "native")]

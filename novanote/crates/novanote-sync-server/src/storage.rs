@@ -13,18 +13,21 @@ pub struct DocBlob {
     pub encrypted_blob: Vec<u8>,
 }
 
-pub async fn store_blob(pool: &sqlx::PgPool, doc_id: Uuid, user_id: Uuid, vector_clock: &Value, encrypted_blob: &[u8]) -> Result<(), sqlx::Error> {
-    sqlx::query(r#"
+pub async fn store_blob(pool: &sqlx::PgPool, doc_id: Uuid, user_id: Uuid, vector_clock: &Value, encrypted_blob: &[u8]) -> Result<Uuid, sqlx::Error> {
+    let row = sqlx::query(r#"
         INSERT INTO doc_blobs (doc_id, user_id, vector_clock, encrypted_blob)
         VALUES ($1, $2, $3, $4)
+        RETURNING id
     "#)
     .bind(doc_id)
     .bind(user_id)
     .bind(vector_clock)
     .bind(encrypted_blob)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
-    Ok(())
+
+    let id: Uuid = row.get("id");
+    Ok(id)
 }
 
 pub async fn get_blobs_for_doc(pool: &sqlx::PgPool, doc_id: Uuid) -> Result<Vec<DocBlob>, sqlx::Error> {
@@ -37,17 +40,15 @@ pub async fn get_blobs_for_doc(pool: &sqlx::PgPool, doc_id: Uuid) -> Result<Vec<
 }
 
 pub async fn get_or_create_user(pool: &sqlx::PgPool, username: &str) -> Result<Uuid, sqlx::Error> {
-    let row = sqlx::query("SELECT id FROM users WHERE username = $1")
-        .bind(username)
-        .fetch_optional(pool).await?;
-    if let Some(row) = row {
-        let id: Uuid = row.get("id");
-        return Ok(id);
-    }
+    // Use INSERT ... ON CONFLICT to avoid TOCTOU race condition
     let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO users (id, username) VALUES ($1, $2)")
-        .bind(id)
-        .bind(username)
-        .execute(pool).await?;
-    Ok(id)
+    let row = sqlx::query(
+        "INSERT INTO users (id, username) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET username = excluded.username RETURNING id"
+    )
+    .bind(id)
+    .bind(username)
+    .fetch_one(pool)
+    .await?;
+    let result: Uuid = row.get("id");
+    Ok(result)
 }

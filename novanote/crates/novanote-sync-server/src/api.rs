@@ -154,20 +154,18 @@ pub async fn api_push(
     let user_id = auth_user.user_id;
     let vc = body.vector_clock.unwrap_or(serde_json::Value::Null);
 
-    storage::store_blob(&state.db, doc_uuid, user_id, &vc, &blob_bytes)
+    let version_id = storage::store_blob(&state.db, doc_uuid, user_id, &vc, &blob_bytes)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Broadcast to WebSocket subscribers
-    if let Ok(channels) = state.doc_channels.lock() {
-        if let Some(tx) = channels.get(&doc_id) {
-            let _ = tx.send(blob_bytes);
-        }
+    if let Some(tx) = state.doc_channels.read().await.get(&doc_id) {
+        let _ = tx.send(blob_bytes);
     }
 
     Ok(Json(PushResponse {
         ok: true,
-        version_id: Uuid::new_v4().to_string(),
+        version_id: version_id.to_string(),
     }))
 }
 
@@ -272,10 +270,8 @@ pub async fn api_clip(
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Broadcast to WebSocket subscribers
-    if let Ok(channels) = state.doc_channels.lock() {
-        if let Some(tx) = channels.get(&doc_id.to_string()) {
-            let _ = tx.send(blob_bytes.clone());
-        }
+    if let Some(tx) = state.doc_channels.read().await.get(&doc_id.to_string()) {
+        let _ = tx.send(blob_bytes.clone());
     }
 
     Ok(Json(ClipResponse {
@@ -344,8 +340,8 @@ pub async fn api_register(
         return Err((axum::http::StatusCode::CONFLICT, "Username already exists".to_string()));
     }
 
-    // Hash the password with a simple scheme (in production use argon2/bcrypt)
-    let password_hash = sha256_hex(&body.password);
+    // Hash the password with Argon2id
+    let password_hash = hash_password(&body.password);
 
     let user_id = Uuid::new_v4();
     sqlx::query("INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)")
@@ -390,7 +386,7 @@ pub async fn api_login(
     let user_id: Uuid = row.get("id");
     let stored_hash: String = row.get("password_hash");
 
-    if stored_hash != sha256_hex(&body.password) {
+    if !verify_password(&body.password, &stored_hash) {
         return Err((axum::http::StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
     }
 
@@ -403,14 +399,47 @@ pub async fn api_login(
     }))
 }
 
-/// Simple SHA-256 hex digest for password hashing.
-fn sha256_hex(input: &str) -> String {
-    use std::fmt::Write;
-    let hash = <sha2::Sha256 as sha2::Digest>::digest(input.as_bytes());
-    hash.iter().fold(String::new(), |mut acc, b| {
-        write!(&mut acc, "{b:02x}").unwrap();
-        acc
-    })
+/// Hash password using Argon2id (password-hashing best practice).
+/// Returns "salt:hash" as base64-encoded string.
+fn hash_password(password: &str) -> String {
+    use rand::Rng;
+    let mut salt = [0u8; 16];
+    rand::thread_rng().fill(&mut salt);
+    let argon2 = argon2::Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::default(),
+    );
+    let mut hash = [0u8; 32];
+    argon2.hash_password_into(password.as_bytes(), &salt, &mut hash)
+        .expect("Failed to hash password");
+    let salt_b64 = base64::engine::general_purpose::STANDARD.encode(&salt);
+    let hash_b64 = base64::engine::general_purpose::STANDARD.encode(&hash);
+    format!("{}:{}", salt_b64, hash_b64)
+}
+
+/// Verify password against stored Argon2id hash.
+fn verify_password(password: &str, stored: &str) -> bool {
+    let parts: Vec<&str> = stored.splitn(2, ':').collect();
+    if parts.len() != 2 { return false; }
+    let salt = match base64::engine::general_purpose::STANDARD.decode(parts[0]) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let expected_hash = match base64::engine::general_purpose::STANDARD.decode(parts[1]) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let argon2 = argon2::Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::default(),
+    );
+    let mut hash = [0u8; 32];
+    if argon2.hash_password_into(password.as_bytes(), &salt, &mut hash).is_err() {
+        return false;
+    }
+    hash == expected_hash.as_slice()
 }
 
 // ── TOTP Two-Factor Authentication endpoints ──────────────────────────────────

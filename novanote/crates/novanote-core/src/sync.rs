@@ -253,12 +253,60 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Flush offline queue when back online
+    /// Flush offline queue when back online.
+    /// Sends all queued updates to the sync server via HTTP.
+    /// Returns the number of updates successfully sent.
     pub async fn flush_offline_queue(&self) -> Result<usize, String> {
-        let mut queue = self.offline_queue.lock().unwrap();
-        let count = queue.len();
-        queue.clear();
-        Ok(count)
+        let queue: Vec<PendingUpdate> = {
+            let mut queue = self.offline_queue.lock().unwrap();
+            queue.drain(..).collect()
+        };
+        if queue.is_empty() {
+            return Ok(0);
+        }
+
+        let config = self.config.lock().unwrap();
+        let server_url = config.server_url.clone();
+        let vault_id = config.vault_id.clone();
+        drop(config);
+
+        if server_url.is_empty() {
+            // Re-queue if we can't send
+            let mut q = self.offline_queue.lock().unwrap();
+            q.extend(queue);
+            return Err("Server URL not configured".to_string());
+        }
+
+        let client = reqwest::Client::new();
+        let mut sent = 0usize;
+
+        for update in &queue {
+            let result = client.post(format!("{}/sync/push", server_url))
+                .json(&serde_json::json!({
+                    "vault_id": vault_id,
+                    "note_id": update.note_id,
+                    "encrypted_blob": format!("{}:{}", update.nonce, update.encrypted_blob),
+                }))
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    sent += 1;
+                }
+                _ => {
+                    // Re-queue failed updates
+                    let mut q = self.offline_queue.lock().unwrap();
+                    q.extend(queue.iter().skip(sent).cloned());
+                    return Err(format!("Failed to send update at index {}", sent));
+                }
+            }
+        }
+
+        let mut shared = self.shared.lock().unwrap();
+        shared.last_sync_timestamp = chrono::Utc::now().timestamp();
+
+        Ok(sent)
     }
 
     /// Get sync status
@@ -453,9 +501,23 @@ impl SyncEngine {
                     s.ws_connected || s.connected
                 };
                 if is_connected {
-                    // In production, send each queued update to the server
-                    // For now, just clear it
-                    offline_queue.lock().unwrap().clear();
+                    // Send queued updates to the server
+                    let queue: Vec<PendingUpdate> = {
+                        let mut q = offline_queue.lock().unwrap();
+                        q.drain(..).collect()
+                    };
+                    if !queue.is_empty() {
+                        for update in &queue {
+                            let _ = client.post(format!("{}/sync/push", server_url))
+                                .json(&serde_json::json!({
+                                    "vault_id": vault_id,
+                                    "note_id": update.note_id,
+                                    "encrypted_blob": format!("{}:{}", update.nonce, update.encrypted_blob),
+                                }))
+                                .send()
+                                .await;
+                        }
+                    }
                 }
             }
         });
