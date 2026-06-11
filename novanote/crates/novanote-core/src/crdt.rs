@@ -68,12 +68,12 @@ impl YDocHolder {
     }
 
     /// Apply a remote update to the document
-    pub fn apply_update(&self, note_id: &str, update_data: &[u8]) -> Result<(), String> {
+    pub fn apply_update(&self, note_id: &str, update_data: &[u8]) -> Result<(), crate::VaultError> {
         let docs = self.docs.lock().unwrap();
-        let doc = docs.get(note_id).ok_or("Doc not found")?;
+        let doc = docs.get(note_id).ok_or(crate::VaultError::Sync("Doc not found".to_string()))?;
         let mut txn = doc.transact_mut();
         let update = Update::decode_v1(update_data)
-            .map_err(|e| format!("Failed to decode update: {}", e))?;
+            .map_err(|e| crate::VaultError::Sync(format!("Failed to decode update: {}", e)))?;
         txn.apply_update(update);
 
         Ok(())

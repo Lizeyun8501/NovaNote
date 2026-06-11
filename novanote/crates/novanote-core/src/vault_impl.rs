@@ -145,7 +145,7 @@ impl Vault {
     pub fn index_file(&self, path: &Path) -> Result<NoteMeta, VaultError> {
         let relative_path = path
             .strip_prefix(&self.root_path)
-            .map_err(|e| VaultError::Other(format!("Failed to get relative path: {}", e)))?
+            .map_err(|e| VaultError::InvalidInput(format!("Failed to get relative path: {}", e)))?
             .to_string_lossy()
             .to_string();
         let content = fs::read_to_string(path)?;
@@ -361,7 +361,7 @@ impl Vault {
             query,
         )
         .await
-        .map_err(VaultError::Other)?;
+        .map_err(VaultError::InvalidInput)?;
 
         // 2. Search for similar notes using the query embedding
         let search_results = self.semantic_search_with_embedding(&embedding)?;
@@ -380,7 +380,7 @@ impl Vault {
         // 4. Call rag_query with the results
         let answer = crate::rag::rag_query(config, query, note_contents)
             .await
-            .map_err(VaultError::Other)?;
+            .map_err(VaultError::InvalidInput)?;
 
         Ok(answer)
     }
@@ -436,15 +436,15 @@ impl Vault {
         if path.exists() {
             fs::remove_file(&path).map_err(VaultError::Io)
         } else {
-            Err(VaultError::Other(format!("Template '{}' not found", name)))
+            Err(VaultError::NotFound(format!("Template '{}' not found", name)))
         }
     }
 
     pub fn import_from_obsidian(&self, source_dir: &Path) -> Result<Vec<NoteMeta>, VaultError> {
         for entry in walkdir::WalkDir::new(source_dir) {
-            let entry = entry.map_err(|e: walkdir::Error| VaultError::Other(e.to_string()))?;
+            let entry = entry.map_err(|e: walkdir::Error| VaultError::InvalidInput(e.to_string()))?;
             if entry.path().extension().map_or(false, |e| e == "md") {
-                let relative = entry.path().strip_prefix(source_dir).map_err(|e| VaultError::Other(e.to_string()))?;
+                let relative = entry.path().strip_prefix(source_dir).map_err(|e| VaultError::InvalidInput(e.to_string()))?;
                 let dest = self.root_path.join(relative);
                 if let Some(parent) = dest.parent() { fs::create_dir_all(parent)?; }
                 fs::copy(entry.path(), &dest)?;
@@ -455,7 +455,7 @@ impl Vault {
 
     pub fn import_from_notion(&self, source_path: &Path) -> Result<Vec<NoteMeta>, VaultError> {
         for entry in walkdir::WalkDir::new(source_path) {
-            let entry = entry.map_err(|e: walkdir::Error| VaultError::Other(e.to_string()))?;
+            let entry = entry.map_err(|e: walkdir::Error| VaultError::InvalidInput(e.to_string()))?;
             if entry.path().extension().map_or(false, |e| e == "md") {
                 let content = fs::read_to_string(entry.path())?;
                 let title = content.lines().find(|l| l.starts_with("# "))
@@ -535,7 +535,7 @@ a {{ color: #6366f1; }}
         let old_full = self.root_path.join(old_path);
         let new_full = self.root_path.join(new_path);
         if !old_full.exists() {
-            return Err(VaultError::Other(format!("Note not found: {}", old_path)));
+            return Err(VaultError::NotFound(format!("Note not found: {}", old_path)));
         }
         if let Some(parent) = new_full.parent() {
             fs::create_dir_all(parent)?;

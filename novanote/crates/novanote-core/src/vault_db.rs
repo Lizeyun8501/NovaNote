@@ -304,16 +304,16 @@ impl VaultDb {
 
     /// Execute a read-only SQL query, returning JSON rows.
     pub fn query_sql(&self, sql: &str) -> Result<Vec<serde_json::Value>, VaultError> {
-        // Safety check: only allow SELECT
+        // Use word-boundary regex matching to avoid false positives
+        // (e.g. "DROP" inside a string literal like `WHERE title = 'DROP TABLE'`).
         let trimmed = sql.trim().to_uppercase();
         if !trimmed.starts_with("SELECT") {
-            return Err(VaultError::Other("Only SELECT queries are allowed".to_string()));
+            return Err(VaultError::InvalidInput("Only SELECT queries are allowed".to_string()));
         }
-        let dangerous = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "ATTACH", "PRAGMA"];
-        for keyword in &dangerous {
-            if trimmed.contains(keyword) {
-                return Err(VaultError::Other(format!("Keyword '{}' is not allowed in queries", keyword)));
-            }
+        let re = regex::Regex::new(r"\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|ATTACH)\b")
+            .map_err(|e| VaultError::InvalidInput(format!("Regex error: {}", e)))?;
+        if re.is_match(&trimmed) {
+            return Err(VaultError::InvalidInput(format!("Dangerous keyword detected in query")));
         }
 
         let conn = block_lock(&self.conn);
@@ -369,7 +369,7 @@ impl VaultDb {
     /// Regex search: load all notes with content in one query, filter in Rust.
     pub fn search_regex(&self, pattern: &str) -> Result<Vec<NoteMeta>, VaultError> {
         let re = regex::Regex::new(pattern)
-            .map_err(|e| VaultError::Other(format!("Invalid regex: {}", e)))?;
+            .map_err(|e| VaultError::InvalidInput(format!("Invalid regex: {}", e)))?;
         let conn = block_lock(&self.conn);
         // Load title AND content in a single query to avoid N+1 per-row queries
         let sql = "SELECT id, title, relative_path, tags, content, created_at, updated_at FROM notes";

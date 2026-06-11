@@ -8,19 +8,30 @@ interface SyncSettingsProps {
   onPasswordSetup: () => void;
 }
 
+interface SyncStatusData {
+  enabled: boolean;
+  server_url: string;
+  vault_id: string;
+  connected: boolean;
+  encryption_ready: boolean;
+  master_password_set: boolean;
+  offline_queue_size: number;
+  last_sync: number;
+}
+
 export function SyncSettings({ isOpen, onClose, onPasswordSetup }: SyncSettingsProps) {
   const [serverUrl, setServerUrl] = useState("");
   const [vaultId, setVaultId] = useState("");
-  const [status, setStatus] = useState<any>(null);
+  const [status, setStatus] = useState<SyncStatusData | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   
   const loadStatus = async () => {
     try {
-      const s = await invoke("sync_get_status");
+      const s = await invoke<SyncStatusData>("sync_get_status");
       setStatus(s);
-      setServerUrl((s as any).server_url || "");
-      setVaultId((s as any).vault_id || "");
+      setServerUrl(s.server_url || "");
+      setVaultId(s.vault_id || "");
     } catch (e) {
       // No vault open or sync not initialized
     }

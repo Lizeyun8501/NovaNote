@@ -54,19 +54,24 @@ pub fn encrypt_string(plaintext: &str, key: &[u8; 32]) -> (String, String) {
 
 /// Decrypt ciphertext using XChaCha20-Poly1305
 /// Returns plaintext bytes or error
-pub fn decrypt(ciphertext: &[u8], nonce: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|e| format!("Invalid key: {}", e))?;
+pub fn decrypt(ciphertext: &[u8], nonce: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, crate::VaultError> {
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|e| crate::VaultError::Sync(format!("Invalid key: {}", e)))?;
     let nonce = XNonce::from_slice(nonce);
-    cipher.decrypt(nonce, ciphertext).map_err(|e| format!("Decryption failed: {}", e))
+    cipher.decrypt(nonce, ciphertext)
+        .map_err(|e| crate::VaultError::Sync(format!("Decryption failed: {}", e)))
 }
 
 /// String convenience: decrypt from base64 strings
-pub fn decrypt_string(ciphertext_b64: &str, nonce_b64: &str, key: &[u8; 32]) -> Result<String, String> {
+pub fn decrypt_string(ciphertext_b64: &str, nonce_b64: &str, key: &[u8; 32]) -> Result<String, crate::VaultError> {
     use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-    let ciphertext = B64.decode(ciphertext_b64).map_err(|e| format!("Invalid base64 ciphertext: {}", e))?;
-    let nonce = B64.decode(nonce_b64).map_err(|e| format!("Invalid base64 nonce: {}", e))?;
+    let ciphertext = B64.decode(ciphertext_b64)
+        .map_err(|e| crate::VaultError::Sync(format!("Invalid base64 ciphertext: {}", e)))?;
+    let nonce = B64.decode(nonce_b64)
+        .map_err(|e| crate::VaultError::Sync(format!("Invalid base64 nonce: {}", e)))?;
     let plaintext = decrypt(&ciphertext, &nonce, key)?;
-    String::from_utf8(plaintext).map_err(|e| format!("Invalid UTF-8: {}", e))
+    String::from_utf8(plaintext)
+        .map_err(|e| crate::VaultError::Sync(format!("Invalid UTF-8: {}", e)))
 }
 
 /// Generate a random 256-bit key (for vault encryption if no password)
@@ -100,12 +105,15 @@ impl EncryptedPayload {
     }
 
     /// Decrypt payload
-    pub fn decrypt(&self, password: &str) -> Result<Vec<u8>, String> {
+    pub fn decrypt(&self, password: &str) -> Result<Vec<u8>, crate::VaultError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-        let salt = B64.decode(&self.salt).map_err(|e| format!("Invalid salt: {}", e))?;
+        let salt = B64.decode(&self.salt)
+            .map_err(|e| crate::VaultError::Sync(format!("Invalid salt: {}", e)))?;
         let (key, _) = derive_key(password, Some(&salt));
-        let ciphertext = B64.decode(&self.ciphertext).map_err(|e| format!("Invalid ciphertext: {}", e))?;
-        let nonce = B64.decode(&self.nonce).map_err(|e| format!("Invalid nonce: {}", e))?;
+        let ciphertext = B64.decode(&self.ciphertext)
+            .map_err(|e| crate::VaultError::Sync(format!("Invalid ciphertext: {}", e)))?;
+        let nonce = B64.decode(&self.nonce)
+            .map_err(|e| crate::VaultError::Sync(format!("Invalid nonce: {}", e)))?;
         decrypt(&ciphertext, &nonce, &key)
     }
 }

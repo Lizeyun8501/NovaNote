@@ -4,9 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["native"]
+default = ["native", "sync"]
 native = ["dep:rocksdb", "dep:coset", "dep:p256", "dep:printpdf", "dep:tantivy", "dep:notify"]
 wasm = []
+# Split from "native": only needed when running the sync server/engine
+sync = []
+# Split from "native": full-text search with Tantivy
+tantivy-search = ["dep:tantivy"]
+# Split from "native": file system watching
+fs-watch = ["dep:notify"]
+# Split from "native": PDF export support
+pdf-export = ["dep:printpdf"]
+# Split from "native": authentication/key management
+auth = ["dep:coset", "dep:p256"]
 
 [dependencies]
 # Always available (WASM-compatible)
@@ -49,3 +59,7 @@ printpdf = { version = "0.7", optional = true }
 
 # Tantivy full-text search engine (native only)
 tantivy = { version = "0.22", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+rstest = "0.18"

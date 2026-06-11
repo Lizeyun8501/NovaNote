@@ -6,6 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use crate::crdt::YDocHolder;
 use crate::crypto::{encrypt, decrypt, derive_key};
 use crate::protobuf::{AuthRequest, SyncMessage};
+use crate::VaultError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncConfig {
@@ -171,17 +172,19 @@ impl SyncEngine {
     }
 
     /// Process a received encrypted update
-    pub fn process_received_update(&self, note_id: &str, encrypted_data: &str, ydoc_holder: &YDocHolder) -> Result<(), String> {
-        let key = self.get_key().ok_or("No master key")?;
+    pub fn process_received_update(&self, note_id: &str, encrypted_data: &str, ydoc_holder: &YDocHolder) -> Result<(), VaultError> {
+        let key = self.get_key().ok_or(VaultError::Sync("No master key".to_string()))?;
 
         use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
         let parts: Vec<&str> = encrypted_data.splitn(2, ':').collect();
         if parts.len() != 2 {
-            return Err("Invalid encrypted data format".to_string());
+            return Err(VaultError::Sync("Invalid encrypted data format".to_string()));
         }
 
-        let nonce = B64.decode(parts[0]).map_err(|e| format!("Invalid nonce: {}", e))?;
-        let ciphertext = B64.decode(parts[1]).map_err(|e| format!("Invalid ciphertext: {}", e))?;
+        let nonce = B64.decode(parts[0])
+            .map_err(|e| VaultError::Sync(format!("Invalid nonce: {}", e)))?;
+        let ciphertext = B64.decode(parts[1])
+            .map_err(|e| VaultError::Sync(format!("Invalid ciphertext: {}", e)))?;
 
         let plaintext = decrypt(&ciphertext, &nonce, &key)?;
 
@@ -192,9 +195,9 @@ impl SyncEngine {
     }
 
     /// Push updates to server via HTTP (fallback)
-    pub async fn push_updates(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), String> {
+    pub async fn push_updates(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), VaultError> {
         if !self.is_enabled() {
-            return Err("Sync not enabled".to_string());
+            return Err(VaultError::Sync("Sync not enabled".to_string()));
         }
 
         let config = self.config.lock().unwrap();
@@ -202,7 +205,7 @@ impl SyncEngine {
         drop(config);
 
         if server_url.is_empty() {
-            self.queue_offline(note_id, ydoc_holder).map_err(|e| e.to_string())?;
+            self.queue_offline(note_id, ydoc_holder)?;
             return Ok(());
         }
 
@@ -229,9 +232,9 @@ impl SyncEngine {
     }
 
     /// Pull updates from server via HTTP (fallback)
-    pub async fn pull_updates(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<bool, String> {
+    pub async fn pull_updates(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<bool, VaultError> {
         if !self.is_enabled() {
-            return Err("Sync not enabled".to_string());
+            return Err(VaultError::Sync("Sync not enabled".to_string()));
         }
 
         let config = self.config.lock().unwrap();
@@ -263,7 +266,7 @@ impl SyncEngine {
     }
 
     /// Queue an operation for offline use
-    fn queue_offline(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), String> {
+    fn queue_offline(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), VaultError> {
         let sv = ydoc_holder.get_state_vector(note_id).unwrap_or_default();
         if let Some(encrypted) = self.prepare_update(note_id, ydoc_holder, &sv) {
             let parts: Vec<&str> = encrypted.splitn(2, ':').collect();
@@ -279,7 +282,7 @@ impl SyncEngine {
     }
 
     /// Flush offline queue when back online
-    pub async fn flush_offline_queue(&self) -> Result<usize, String> {
+    pub async fn flush_offline_queue(&self) -> Result<usize, VaultError> {
         let mut queue = self.offline_queue.lock().unwrap();
         let count = queue.len();
         queue.clear();
@@ -324,17 +327,17 @@ impl SyncEngine {
     /// - Listens for incoming encrypted CRDT updates and applies them
     /// - Forwards local changes to the server when requested
     /// - Reconnects with exponential backoff on disconnection
-    pub fn connect_websocket(&self, ydoc_holder: YDocHolder) -> Result<(), String> {
+    pub fn connect_websocket(&self, ydoc_holder: YDocHolder) -> Result<(), VaultError> {
         if self.shared.lock().unwrap().ws_connected {
             return Ok(()); // Already connected
         }
 
         let config = self.config.lock().unwrap().clone();
         if config.server_url.is_empty() || config.vault_id.is_empty() {
-            return Err("Server URL and vault ID must be configured".to_string());
+            return Err(VaultError::Sync("Server URL and vault ID must be configured".to_string()));
         }
         if config.jwt_token.is_empty() {
-            return Err("JWT token must be set before connecting".to_string());
+            return Err(VaultError::Sync("JWT token must be set before connecting".to_string()));
         }
 
         // Create channels for commands and shutdown signalling
@@ -383,7 +386,7 @@ impl SyncEngine {
 
     /// Send a local update through the WebSocket connection (if connected).
     /// Falls back to HTTP push if WebSocket is not connected.
-    pub async fn send_ws_update(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), String> {
+    pub async fn send_ws_update(&self, note_id: &str, ydoc_holder: &YDocHolder) -> Result<(), VaultError> {
         if self.shared.lock().unwrap().ws_connected {
             if let Some(tx) = self.ws_cmd_tx.lock().unwrap().as_ref() {
                 let sv = ydoc_holder.get_state_vector(note_id).unwrap_or_default();
@@ -406,9 +409,9 @@ impl SyncEngine {
     /// - Connects WebSocket if not already connected
     /// - Periodically (every 30s) performs a full HTTP sync as fallback
     /// - Processes the offline queue when connection is established
-    pub fn start_sync_loop(&self, ydoc_holder: YDocHolder) -> Result<(), String> {
+    pub fn start_sync_loop(&self, ydoc_holder: YDocHolder) -> Result<(), VaultError> {
         if !self.is_enabled() {
-            return Err("Sync not enabled".to_string());
+            return Err(VaultError::Sync("Sync not enabled".to_string()));
         }
 
         // Try to connect WebSocket (non-blocking — ok if it fails, HTTP fallback will work)
@@ -492,14 +495,16 @@ impl SyncEngine {
 }
 
 /// Decrypt an incoming encrypted update string (format: "base64_nonce:base64_ciphertext")
-fn decrypt_incoming(encrypted_data: &str, key: &[u8; 32]) -> Result<Vec<u8>, String> {
+fn decrypt_incoming(encrypted_data: &str, key: &[u8; 32]) -> Result<Vec<u8>, VaultError> {
     use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
     let parts: Vec<&str> = encrypted_data.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err("Invalid encrypted data format".to_string());
+        return Err(VaultError::Sync("Invalid encrypted data format".to_string()));
     }
-    let nonce = B64.decode(parts[0]).map_err(|e| format!("Invalid nonce: {}", e))?;
-    let ciphertext = B64.decode(parts[1]).map_err(|e| format!("Invalid ciphertext: {}", e))?;
+    let nonce = B64.decode(parts[0])
+        .map_err(|e| VaultError::Sync(format!("Invalid nonce: {}", e)))?;
+    let ciphertext = B64.decode(parts[1])
+        .map_err(|e| VaultError::Sync(format!("Invalid ciphertext: {}", e)))?;
     decrypt(&ciphertext, &nonce, key)
 }
 

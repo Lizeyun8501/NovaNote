@@ -230,13 +230,7 @@ fn vault_export_html(state: State<AppState>, relative_path: String, output_path:
     vault.export_note_as_html(&relative_path, &output_path).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn vault_export_markdown(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let result = novanote_core::export_note(vault, &relative_path, ExportFormat::Markdown).map_err(|e| e.to_string())?;
-    std::fs::write(&output_path, result.data).map_err(|e| e.to_string())
-}
+
 
 #[tauri::command]
 fn export_note_md(state: State<AppState>, relative_path: String, output_path: String) -> Result<(), String> {
@@ -292,21 +286,9 @@ fn vault_write_canvas(state: State<AppState>, relative_path: String, data: Strin
     std::fs::write(&full_path, data).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn save_canvas(state: State<AppState>, relative_path: String, data: String) -> Result<(), String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
-    std::fs::write(&full_path, data).map_err(|e| e.to_string())
-}
 
-#[tauri::command]
-fn load_canvas(state: State<AppState>, relative_path: String) -> Result<String, String> {
-    let vault_guard = state.vault.lock().map_err(|e| e.to_string())?;
-    let vault = vault_guard.as_ref().ok_or("No vault opened")?;
-    let full_path = vault.root_path.join(&relative_path);
-    std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
-}
+
+
 
 #[tauri::command]
 fn vault_save_as_template(state: State<AppState>, name: String, content: String) -> Result<(), String> {
@@ -866,7 +848,6 @@ pub fn run() {
             vault_get_backlinks_with_blocks,
             vault_get_graph_data,
             vault_export_html,
-            vault_export_markdown,
             export_note_md,
             export_note_html,
             export_note_pdf,
@@ -876,8 +857,6 @@ pub fn run() {
             vault_delete_template,
             vault_read_canvas,
             vault_write_canvas,
-            save_canvas,
-            load_canvas,
             sync_configure,
             sync_enable,
             sync_disable,

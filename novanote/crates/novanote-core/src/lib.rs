@@ -31,6 +31,12 @@ pub enum VaultError {
     AlreadyVault,
     #[error("Not a vault")]
     NotVault,
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
+    #[error("Sync error: {0}")]
+    Sync(String),
     #[error("{0}")]
     Other(String),
 }

@@ -7,7 +7,7 @@ use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{doc, Index, IndexWriter, ReloadPolicy};
+use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
 
 use crate::VaultError;
 
@@ -19,10 +19,12 @@ pub struct SearchHit {
     pub score: f32,
 }
 
-/// Tantivy-based full-text search index
+/// Tantivy-based full-text search index.
+/// Caches the `IndexReader` to avoid creating a new one on every search.
 pub struct TantivyIndex {
     index: Index,
     writer: IndexWriter,
+    reader: IndexReader,
     schema: Schema,
     path_field: Field,
     title_field: Field,
@@ -50,16 +52,31 @@ impl TantivyIndex {
         };
 
         let writer = index.writer(15_000_000)?; // 15 MB heap
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
 
         Ok(TantivyIndex {
             index,
             writer,
+            reader,
             schema,
             path_field,
             title_field,
             content_field,
             tags_field,
         })
+    }
+
+    /// Recreate the reader after a write to pick up new/updated documents.
+    fn refresh_reader(&mut self) -> Result<(), VaultError> {
+        self.reader = self
+            .index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
+        Ok(())
     }
 
     fn build_schema() -> Schema {
@@ -100,16 +117,17 @@ impl TantivyIndex {
         Ok(())
     }
 
-    /// Search the Tantivy index with advanced query syntax
-    /// Supports queries like: `title:foo AND content:bar`
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, VaultError> {
-        let reader = self
-            .index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
+    /// Commit pending writes and refresh the reader so searches pick up new data.
+    pub fn commit(&mut self) -> Result<(), VaultError> {
+        self.writer.commit()?;
+        self.refresh_reader()?;
+        Ok(())
+    }
 
-        let searcher = reader.searcher();
+    /// Search the Tantivy index with advanced query syntax.
+    /// Uses a cached `IndexReader` to avoid per-search overhead.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, VaultError> {
+        let searcher = self.reader.searcher();
 
         let query_parser = QueryParser::for_index(
             &self.index,
@@ -143,11 +161,5 @@ impl TantivyIndex {
         }
 
         Ok(results)
-    }
-
-    /// Commit pending changes to the index
-    pub fn commit(&mut self) -> Result<(), VaultError> {
-        self.writer.commit()?;
-        Ok(())
     }
 }
