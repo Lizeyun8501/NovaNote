@@ -9,6 +9,7 @@ use novanote_core::AuditEntry;
 use novanote_core::TranscriptionResult;
 use novanote_core::ExportFormat;
 use novanote_core::FileChangeEvent;
+use novanote_core::{RagConfig, RagAnswer};
 use novanote_plugin_runtime::{PluginHost, PluginManifest, PluginInfo, PluginStatus};
 use novanote_tauri;
 use serde::{Deserialize, Serialize};

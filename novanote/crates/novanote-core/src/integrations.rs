@@ -376,7 +376,7 @@ struct NotionBlock {
 }
 
 /// Recursively fetch blocks from the Notion API
-fn fetch_blocks_recursive<'a>(config: &'a NotionConfig, block_id: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<NotionBlock>, String>> + 'a>> {
+fn fetch_blocks_recursive<'a>(config: &'a NotionConfig, block_id: &'a str) -> std::pin::Pin<Box<dyn futures_util::future::Future<Output = Result<Vec<NotionBlock>, String>> + Send + 'a>> {
     Box::pin(async move {
         let client = reqwest::Client::new();
         let url = format!("https://api.notion.com/v1/blocks/{}/children", block_id);
