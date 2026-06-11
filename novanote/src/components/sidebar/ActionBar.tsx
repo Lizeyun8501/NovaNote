@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 
 interface ActionBarProps {
   onOpenVault: () => void;
@@ -23,11 +24,13 @@ export default function ActionBar({
   onOpenCalendar,
   onOpenPlugins,
 }: ActionBarProps) {
+  const { t } = useTranslation();
+
   const handleOpenVault = async () => {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Select a vault directory",
+      title: t("actionBar.selectVaultDirectory"),
     });
     if (selected) {
       const path = typeof selected === "string" ? selected : selected;
@@ -48,9 +51,9 @@ export default function ActionBar({
           backgroundColor: "var(--accent)",
           color: "#ffffff",
         }}
-        title="New Note"
+        title={t("actionBar.newNote")}
       >
-        + New
+        {t("actionBar.newNote")}
       </button>
       {onNewCanvas && (
         <button
@@ -60,7 +63,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="New Canvas"
+          title={t("actionBar.newCanvas")}
         >
           🎨
         </button>
@@ -72,7 +75,7 @@ export default function ActionBar({
           backgroundColor: "var(--bg-hover)",
           color: "var(--text-secondary)",
         }}
-        title="Open Vault"
+        title={t("actionBar.openVault")}
       >
         📂
       </button>
@@ -84,7 +87,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="Daily Note"
+          title={t("actionBar.dailyNote")}
         >
           📅
         </button>
@@ -97,7 +100,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="Templates"
+          title={t("actionBar.templates")}
         >
           📋
         </button>
@@ -110,7 +113,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="Import Notes"
+          title={t("actionBar.import")}
         >
           ⬇
         </button>
@@ -123,7 +126,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="AI Assistant"
+          title={t("actionBar.aiAssistant")}
         >
           🤖
         </button>
@@ -136,7 +139,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="Calendar"
+          title={t("actionBar.calendar")}
         >
           📆
         </button>
@@ -149,7 +152,7 @@ export default function ActionBar({
             backgroundColor: "var(--bg-hover)",
             color: "var(--text-secondary)",
           }}
-          title="Plugins"
+          title={t("actionBar.plugins")}
         >
           🧩
         </button>

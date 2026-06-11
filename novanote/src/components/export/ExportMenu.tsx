@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
@@ -7,6 +8,7 @@ interface ExportMenuProps {
 }
 
 export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -97,7 +99,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
           color: "var(--text-secondary)",
           boxShadow: "none",
         }}
-        title="Export note"
+        title={t("export.title")}
       >
         <svg
           width="16"
@@ -113,7 +115,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
           <path d="M8 2v8" />
           <path d="M5 7l3 3 3-3" />
         </svg>
-        Export
+        {t("export.title")}
       </button>
 
       {open && currentNotePath && (
@@ -134,7 +136,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
               boxShadow: "none",
             }}
           >
-            Export as Markdown
+            {t("export.exportAsMarkdown")}
           </button>
           <button
             onClick={handleExportHtml}
@@ -146,7 +148,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
               boxShadow: "none",
             }}
           >
-            Export as HTML
+            {t("export.exportAsHtml")}
           </button>
           <button
             onClick={handleExportPdf}
@@ -158,7 +160,7 @@ export default function ExportMenu({ currentNotePath }: ExportMenuProps) {
               boxShadow: "none",
             }}
           >
-            Export as PDF
+            {t("export.exportAsPdf")}
           </button>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { FileTreeNode } from "../../types";
 
 interface FileTreeProps {
@@ -65,9 +66,11 @@ function FileTreeNodeItem({
     setContextMenu(null);
   };
 
+  const { t } = useTranslation();
+
   const handleRename = () => {
     handleCloseContextMenu();
-    const newName = prompt("Enter new name:", node.name);
+    const newName = prompt(t("common.enterNewName"), node.name);
     if (newName && newName !== node.name && newName.trim()) {
       // Build new path by replacing the basename in the path
       const parentPath = node.path.substring(0, node.path.lastIndexOf("/") + 1);
@@ -78,7 +81,7 @@ function FileTreeNodeItem({
 
   const handleDelete = () => {
     handleCloseContextMenu();
-    if (confirm(`Delete "${node.name}"? This action cannot be undone.`)) {
+    if (confirm(t("common.deleteConfirm", { name: node.name }))) {
       onDelete?.(node.path);
     }
   };
@@ -171,14 +174,14 @@ function FileTreeNodeItem({
               className="block w-full text-left px-4 py-1.5 hover:bg-[var(--bg-hover)] transition-colors"
               style={{ color: "var(--text-primary)" }}
             >
-              Rename
+              {t("common.rename")}
             </button>
             <button
               onClick={handleDelete}
               className="block w-full text-left px-4 py-1.5 hover:bg-[var(--bg-hover)] transition-colors"
               style={{ color: "var(--text-primary)" }}
             >
-              Delete
+              {t("common.delete")}
             </button>
           </div>
         </>

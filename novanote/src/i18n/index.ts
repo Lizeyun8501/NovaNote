@@ -12,7 +12,12 @@ i18n
       en: { translation: en },
       zh: { translation: zh },
     },
-    fallbackLng: 'en',
+    fallbackLng: 'zh',
+    lng: 'zh',
+    detection: {
+      order: ['localStorage', 'navigator', 'htmlTag'],
+      caches: ['localStorage'],
+    },
     interpolation: {
       escapeValue: false,
     },

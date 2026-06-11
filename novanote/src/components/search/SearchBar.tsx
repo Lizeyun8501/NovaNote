@@ -305,7 +305,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 type="text"
                 value={semanticBaseUrl}
                 onChange={(e) => setSemanticBaseUrl(e.target.value)}
-                placeholder="Ollama URL"
+                placeholder={t("ai.ollamaUrl")}
                 className="w-40 px-1.5 py-1 rounded border"
                 style={{
                   backgroundColor: "var(--bg-primary)",
@@ -317,7 +317,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
                 type="text"
                 value={semanticModel}
                 onChange={(e) => setSemanticModel(e.target.value)}
-                placeholder="Embed model"
+                placeholder={t("ai.semanticModel")}
                 className="w-36 px-1.5 py-1 rounded border"
                 style={{
                   backgroundColor: "var(--bg-primary)",

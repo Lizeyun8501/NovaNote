@@ -835,9 +835,9 @@ function App() {
                     border: "1px solid var(--border-color)",
                     cursor: "pointer",
                   }}
-                  title="Knowledge Graph"
+                  title={t("graph.title")}
                 >
-                  Graph
+                  {t("graph.open")}
                 </button>
                 <ExportMenu currentNotePath={selectedPath} />
               </div>
@@ -862,9 +862,9 @@ function App() {
                     border: "1px solid var(--border-color)",
                     cursor: "pointer",
                   }}
-                  title="Knowledge Graph"
+                  title={t("graph.title")}
                 >
-                  Graph
+                  {t("graph.open")}
                 </button>
               )}
             </div>
@@ -885,7 +885,7 @@ function App() {
                 key={selectedPath}
                 content={htmlContent}
                 onChange={handleChange}
-                placeholder="Start writing your note..."
+                placeholder={t("editor.placeholder")}
                 onLinkClick={handleLinkClick}
                 onSelectionChange={setAiSelectedText}
               />

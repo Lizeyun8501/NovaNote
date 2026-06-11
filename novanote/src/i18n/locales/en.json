@@ -86,6 +86,7 @@
     "test": "Test",
     "ollamaUrl": "Ollama URL",
     "model": "Model",
+    "semanticModel": "Embed Model",
     "noNoteOpen": "No note is currently open.",
     "noTextSelected": "No text selected for writing assistance.",
     "enterQuestion": "Please enter a question.",
@@ -243,6 +244,10 @@
     "color": "Color:",
     "nodeCount": "{{nodes}} nodes, {{edges}} edges"
   },
+  "graph": {
+    "title": "Knowledge Graph",
+    "open": "Graph"
+  },
   "outline": {
     "title": "Outline",
     "noHeadings": "No headings found"
@@ -315,6 +320,8 @@
     "close": "Close",
     "save": "Save",
     "ok": "OK",
-    "esc": "ESC"
+    "esc": "ESC",
+    "enterNewName": "Enter new name:",
+    "deleteConfirm": "Delete \"{{name}}\"? This action cannot be undone."
   }
 }
