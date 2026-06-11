@@ -41,7 +41,7 @@ export default function ActionBar({
 
   return (
     <div
-      className="flex items-center gap-1 px-3 py-2 border-b"
+      className="flex items-center gap-1 px-2 py-2 border-b flex-wrap"
       style={{ borderColor: "var(--border-color)" }}
     >
       <button
