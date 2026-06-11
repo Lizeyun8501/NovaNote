@@ -456,12 +456,20 @@ pub struct TotpSetupResponse {
 }
 
 pub async fn api_totp_setup(
+    State(state): State<crate::server::AppState>,
     Json(body): Json<TotpSetupRequest>,
-) -> Result<Json<TotpSetupResponse>, axum::http::StatusCode> {
+) -> Result<Json<TotpSetupResponse>, (axum::http::StatusCode, String)> {
+    let user_id = uuid::Uuid::parse_str(&body.user_id)
+        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid user_id".into()))?;
+
     let secret = totp::generate_secret();
     let uri = totp::generate_otpauth_uri(&secret, &body.user_id, "NovaNote");
 
-    // In production, store secret in DB associated with user
+    // Store TOTP secret in the database
+    storage::store_totp_secret(&state.db, user_id, &secret)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     Ok(Json(TotpSetupResponse {
         secret,
         otpauth_uri: uri,
@@ -470,7 +478,7 @@ pub async fn api_totp_setup(
 
 #[derive(Debug, Deserialize)]
 pub struct TotpVerifyRequest {
-    pub secret: String,
+    pub user_id: String,
     pub code: String,
 }
 
@@ -480,8 +488,22 @@ pub struct TotpVerifyResponse {
 }
 
 pub async fn api_totp_verify(
+    State(state): State<crate::server::AppState>,
     Json(body): Json<TotpVerifyRequest>,
-) -> Result<Json<TotpVerifyResponse>, axum::http::StatusCode> {
-    let valid = totp::verify_totp(&body.secret, &body.code).unwrap_or(false);
+) -> Result<Json<TotpVerifyResponse>, (axum::http::StatusCode, String)> {
+    let user_id = uuid::Uuid::parse_str(&body.user_id)
+        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid user_id".into()))?;
+
+    // Read TOTP secret from database
+    let secret = storage::get_totp_secret(&state.db, user_id)
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let secret = match secret {
+        Some(s) => s,
+        None => return Ok(Json(TotpVerifyResponse { valid: false })),
+    };
+
+    let valid = totp::verify_totp(&secret, &body.code).unwrap_or(false);
     Ok(Json(TotpVerifyResponse { valid }))
 }

@@ -26,6 +26,7 @@ import { MobileLayout } from "./components/layout/MobileLayout";
 import type { NoteMeta, FileTreeNode } from "./types";
 import { buildFileTree } from "./utils/buildFileTree";
 import { refreshVaultData, readNoteContent, writeNoteContent } from "./api/vault";
+import { ErrorProvider, useError } from "./components/ErrorNotification";
 import "./App.css";
 import "./styles/responsive.css";
 
@@ -45,6 +46,7 @@ function useMediaQuery(query: string): boolean {
 
 function App() {
   const { t } = useTranslation();
+  const { showError } = useError();
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
@@ -95,6 +97,7 @@ function App() {
       setFileTree(data.fileTree);
     } catch (err) {
       console.error("Failed to open vault:", err);
+      showError("Failed to open vault: " + String(err));
     }
   }, []);
 
@@ -246,6 +249,7 @@ function App() {
       setHtmlContent(content);
     } catch (err) {
       console.error("Failed to read note:", err);
+      showError("Failed to read note");
     }
   }, []);
 
@@ -280,6 +284,7 @@ function App() {
           await handleSelectFile(targetPath);
         } catch (writeErr) {
           console.error("Failed to create linked note:", writeErr);
+          showError("Failed to create linked note");
         }
       }
     },
@@ -304,6 +309,7 @@ function App() {
           await writeNoteContent(path, markdown);
         } catch (err) {
           console.error("Failed to save note:", err);
+          showError("Failed to save note");
         }
       }, 500);
     },
@@ -319,7 +325,8 @@ function App() {
       setNoteContent(content);
       setHtmlContent(content);
     } catch (err) {
-      console.error("Failed to read note from search:", err);
+      console.error("Failed to search:", err);
+      showError("Search failed");
     }
   }, []);
 
@@ -337,6 +344,7 @@ function App() {
       }
     } catch (err) {
       console.error("Rename failed:", err);
+      showError("Failed to rename note");
     }
   }, [selectedPath]);
 
@@ -355,6 +363,7 @@ function App() {
       }
     } catch (err) {
       console.error("Delete failed:", err);
+      showError("Failed to delete note");
     }
   }, [selectedPath]);
 
@@ -400,6 +409,7 @@ function App() {
       setHtmlContent("");
     } catch (err) {
       console.error("Failed to create canvas:", err);
+      showError("Failed to create canvas");
     }
   }, [vaultPath]);
 
@@ -448,6 +458,7 @@ function App() {
         setHtmlContent(content);
       } catch (writeErr) {
         console.error("Failed to create daily note:", writeErr);
+        showError("Failed to create daily note");
       }
     }
   }, [vaultPath]);
@@ -554,6 +565,7 @@ function App() {
       setFileTree(data.fileTree);
     } catch (err) {
       console.error("Failed to apply AI tags:", err);
+      showError("Failed to apply AI tags");
     }
   }, []);
 
@@ -576,6 +588,7 @@ function App() {
       await writeNoteContent(path, newContent);
     } catch (err) {
       console.error("Failed to apply AI summary:", err);
+      showError("Failed to apply AI summary");
     }
   }, []);
 
@@ -1018,4 +1031,10 @@ function App() {
   );
 }
 
-export default App;
+export default function AppWithError() {
+  return (
+    <ErrorProvider>
+      <App />
+    </ErrorProvider>
+  );
+}

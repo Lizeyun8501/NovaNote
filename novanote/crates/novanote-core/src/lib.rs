@@ -189,11 +189,15 @@ pub struct SyncStatusInfo {
 // === Block Model ===
 // Block-based document model inspired by Notion/Notion-style editors.
 // TipTap (ProseMirror) already uses a block model on the frontend;
-// these types align the Rust backend with the editor's document structure.
+// ── Block-based document model (planned for future block editor) ──
+// These types define a structured document model for a block-based editor.
+// Currently not used by the Vault implementation (which stores plain Markdown),
+// but reserved for future migration to block-level CRDT editing.
 
 /// Block types matching ProseMirror/TipTap node types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub enum BlockType {
     Paragraph,
     Heading,
@@ -217,6 +221,7 @@ pub enum BlockType {
 
 /// A block in the document tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Block {
     pub id: String,
     pub block_type: BlockType,
@@ -228,6 +233,7 @@ pub struct Block {
 
 /// A reference from one block to another note/block
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct BlockRef {
     pub target_note_path: String,
     pub target_block_id: Option<String>,
@@ -236,6 +242,7 @@ pub struct BlockRef {
 
 /// Full note structure with blocks (extends NoteMeta for richer data)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Note {
     pub meta: NoteMeta,
     pub blocks: Vec<Block>,
@@ -245,6 +252,7 @@ pub struct Note {
 
 /// Bidirectional link index entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct LinkIndex {
     pub source_path: String,
     pub source_block_id: Option<String>,

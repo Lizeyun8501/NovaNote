@@ -14,6 +14,7 @@ pub struct SyncConfig {
     pub enabled: bool,
     pub master_password_set: bool,
     pub jwt_token: String,
+    pub device_id: String,
 }
 
 /// Represents a pending sync operation (for offline queue)
@@ -66,6 +67,7 @@ impl SyncEngine {
                 enabled: false,
                 master_password_set: false,
                 jwt_token: String::new(),
+                device_id: uuid::Uuid::new_v4().to_string(),
             })),
             master_key: Arc::new(Mutex::new(None)),
             offline_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -181,7 +183,10 @@ impl SyncEngine {
             return Ok(());
         }
 
-        self.flush_offline_queue().await.ok();
+        self.flush_offline_queue().await.unwrap_or_else(|e| {
+            tracing::warn!("Failed to flush offline queue before push: {}", e);
+            0
+        });
 
         let sv = ydoc_holder.get_state_vector(note_id).unwrap_or_default();
         if let Some(encrypted) = self.prepare_update(note_id, ydoc_holder, &sv) {
@@ -194,7 +199,9 @@ impl SyncEngine {
                 }))
                 .send()
                 .await
-                .ok();
+                .unwrap_or_else(|e| {
+                    tracing::warn!("HTTP push failed for note {}: {}", note_id, e);
+                });
 
             let mut shared = self.shared.lock().unwrap();
             shared.last_sync_timestamp = chrono::Utc::now().timestamp();
@@ -604,7 +611,7 @@ async fn run_ws_loop(
                     msg_type: "auth".to_string(),
                     auth: Some(AuthRequest {
                         jwt: config.jwt_token.clone(),
-                        device_id: whoami::devicename(),
+                        device_id: config.device_id.clone(),
                         vault_id: config.vault_id.clone(),
                     }),
                     auth_ok: None,

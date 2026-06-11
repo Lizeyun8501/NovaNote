@@ -32,8 +32,14 @@ pub async fn run(database_url: &str, bind_addr: &str, jwt_secret: &str) {
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL DEFAULT '',
+            totp_secret TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    "#).execute(&pool).await.ok();
+
+    // Add totp_secret column if it doesn't exist (for existing databases)
+    sqlx::query(r#"
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT
     "#).execute(&pool).await.ok();
 
     // Add password_hash column if it doesn't exist (for existing databases)

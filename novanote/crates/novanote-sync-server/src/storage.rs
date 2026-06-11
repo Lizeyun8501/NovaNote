@@ -52,3 +52,22 @@ pub async fn get_or_create_user(pool: &sqlx::PgPool, username: &str) -> Result<U
     let result: Uuid = row.get("id");
     Ok(result)
 }
+
+/// Store a TOTP secret for a user.
+pub async fn store_totp_secret(pool: &sqlx::PgPool, user_id: Uuid, secret: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE users SET totp_secret = $1 WHERE id = $2")
+        .bind(secret)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Retrieve a user's TOTP secret.
+pub async fn get_totp_secret(pool: &sqlx::PgPool, user_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query("SELECT totp_secret FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| r.get(0)))
+}
