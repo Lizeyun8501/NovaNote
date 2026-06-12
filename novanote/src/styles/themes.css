@@ -15,6 +15,7 @@
     --text-muted: #94a3b8;
     --border-color: #e2e8f0;
     --accent: #6366f1;
+    --accent-color: #6366f1;
     --accent-hover: #4f46e5;
     --toolbar-active: #e0e7ff;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -40,6 +41,7 @@
     --text-muted: #64748b;
     --border-color: #334155;
     --accent: #818cf8;
+    --accent-color: #818cf8;
     --accent-hover: #6366f1;
     --toolbar-active: #1e1b4b;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);

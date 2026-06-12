@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface BuiltInTemplate {
@@ -52,12 +52,15 @@ export default function TemplateManager({ onSelectTemplate, onSaveTemplate }: Te
   const [saveMode, setSaveMode] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [tab, setTab] = useState<"builtin" | "custom">("builtin");
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    loadCustomTemplates();
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
-  const loadCustomTemplates = async () => {
+  const loadCustomTemplates = useCallback(async () => {
     try {
       const names: string[] = await invoke("vault_list_templates");
       const templates: CustomTemplate[] = [];
@@ -69,13 +72,21 @@ export default function TemplateManager({ onSelectTemplate, onSaveTemplate }: Te
           // Skip templates that fail to load
         }
       }
-      setCustomTemplates(templates);
+      if (mountedRef.current) {
+        setCustomTemplates(templates);
+      }
     } catch (err) {
       console.error("Failed to load custom templates:", err);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadCustomTemplates();
+  }, [loadCustomTemplates]);
 
   const handleSelectBuiltIn = (template: BuiltInTemplate) => {
     setSelectedTemplate(template);
@@ -104,7 +115,7 @@ export default function TemplateManager({ onSelectTemplate, onSaveTemplate }: Te
     } catch (err) {
       console.error("Failed to save template:", err);
     }
-  }, [templateName, onSaveTemplate]);
+  }, [templateName, onSaveTemplate, loadCustomTemplates]);
 
   const handleDeleteTemplate = async (name: string) => {
     try {
@@ -126,9 +137,11 @@ export default function TemplateManager({ onSelectTemplate, onSaveTemplate }: Te
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
       style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}
+      onClick={() => onSelectTemplate("")}
     >
       <div
         className="rounded-lg shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
         style={{
           backgroundColor: "var(--bg-primary)",
           color: "var(--text-primary)",
