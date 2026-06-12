@@ -25,6 +25,7 @@ import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
 import { buildFileTree } from "./utils/buildFileTree";
 import { MobileLayout } from "./components/layout/MobileLayout";
+import WelcomeScreen from "./components/welcome/WelcomeScreen";
 import type { NoteMeta, FileTreeNode } from "./types";
 import "./App.css";
 import "./styles/responsive.css";
@@ -795,7 +796,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0">
         {/* Editor header */}
         <header
-          className="px-6 py-3 border-b shrink-0"
+          className="px-4 py-2 border-b shrink-0"
           style={{
             backgroundColor: "var(--bg-secondary)",
             borderColor: "var(--border-color)",
@@ -803,40 +804,63 @@ function App() {
         >
           {selectedPath ? (
             <div className="flex items-center justify-between min-w-0">
-              <p
-                className="text-sm truncate"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {canvasPath ? "🎨 " : ""}
-                {selectedPath}
-              </p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {canvasPath && (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="M21 15l-5-5L5 21" />
+                  </svg>
+                )}
+                <p
+                  className="text-sm truncate font-medium"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  {selectedPath}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 {!canvasPath && (
                   <button
                     onClick={() => setShowOutline((prev) => !prev)}
-                    className="px-2 py-1 rounded text-sm transition-colors"
+                    className="px-2.5 py-1.5 rounded-md text-sm transition-all flex items-center gap-1.5"
                     style={{
-                      backgroundColor: showOutline ? "var(--accent-color, #4f46e5)" : "var(--bg-hover)",
+                      backgroundColor: showOutline ? "var(--accent)" : "transparent",
                       color: showOutline ? "#fff" : "var(--text-secondary)",
-                      border: "1px solid var(--border-color)",
+                      border: `1px solid ${showOutline ? "var(--accent)" : "var(--border-color)"}`,
                       cursor: "pointer",
                     }}
                     title={t("outline.title")}
                   >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="8" y1="6" x2="21" y2="6" />
+                      <line x1="8" y1="12" x2="21" y2="12" />
+                      <line x1="8" y1="18" x2="21" y2="18" />
+                      <line x1="3" y1="6" x2="3.01" y2="6" />
+                      <line x1="3" y1="12" x2="3.01" y2="12" />
+                      <line x1="3" y1="18" x2="3.01" y2="18" />
+                    </svg>
                     {t("outline.title")}
                   </button>
                 )}
                 <button
                   onClick={() => setShowGraph(true)}
-                  className="px-2 py-1 rounded text-sm transition-colors"
+                  className="px-2.5 py-1.5 rounded-md text-sm transition-all flex items-center gap-1.5"
                   style={{
-                    backgroundColor: "var(--bg-hover)",
+                    backgroundColor: "transparent",
                     color: "var(--text-secondary)",
                     border: "1px solid var(--border-color)",
                     cursor: "pointer",
                   }}
                   title={t("graph.title")}
                 >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
                   {t("graph.open")}
                 </button>
                 <ExportMenu currentNotePath={selectedPath} />
@@ -855,15 +879,22 @@ function App() {
               {vaultPath && (
                 <button
                   onClick={() => setShowGraph(true)}
-                  className="px-2 py-1 rounded text-sm transition-colors"
+                  className="px-2.5 py-1.5 rounded-md text-sm transition-all flex items-center gap-1.5"
                   style={{
-                    backgroundColor: "var(--bg-hover)",
+                    backgroundColor: "transparent",
                     color: "var(--text-secondary)",
                     border: "1px solid var(--border-color)",
                     cursor: "pointer",
                   }}
                   title={t("graph.title")}
                 >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
                   {t("graph.open")}
                 </button>
               )}
@@ -891,13 +922,12 @@ function App() {
               />
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <p style={{ color: "var(--text-muted)" }}>
-                {vaultPath
-                  ? t("app.selectOrCreate")
-                  : t("app.openVaultToBegin")}
-              </p>
-            </div>
+            <WelcomeScreen
+              onNewNote={handleNewNote}
+              onOpenDailyNote={handleOpenDailyNote}
+              onOpenGraph={() => setShowGraph(true)}
+              hasVault={!!vaultPath}
+            />
           )}
           {showOutline && !canvasPath && selectedPath && (
             <OutlinePanel

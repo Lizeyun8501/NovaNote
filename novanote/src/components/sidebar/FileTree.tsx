@@ -96,17 +96,19 @@ function FileTreeNodeItem({
       <li role="treeitem" aria-expanded={expanded}>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 w-full text-left px-2 py-1 rounded text-sm select-none hover:opacity-80"
+          className="flex items-center gap-1.5 w-full text-left px-2 py-1.5 rounded-md text-sm select-none transition-all duration-150 hover:opacity-80"
           style={{
             paddingLeft: `${8 + depth * 12}px`,
             color: "var(--text-secondary)",
           }}
         >
-          <span className="text-xs w-3 inline-block">
-            {expanded ? "▼" : "▶"}
-          </span>
-          <span>📁</span>
-          <span className="truncate">{node.name}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 transition-transform duration-150" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0" style={{ color: "var(--accent)" }}>
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <span className="truncate font-medium">{node.name}</span>
         </button>
         {expanded && node.children.length > 0 && (
           <FileTree
@@ -130,18 +132,32 @@ function FileTreeNodeItem({
       <button
         onClick={() => onSelect(node.path)}
         onContextMenu={handleContextMenu}
-        className="flex items-center gap-1 w-full text-left px-2 py-1 rounded text-sm select-none"
+        className="flex items-center gap-1.5 w-full text-left px-2 py-1.5 rounded-md text-sm select-none transition-all duration-150"
         style={{
-          paddingLeft: `${8 + depth * 12 + 16}px`,
+          paddingLeft: `${8 + depth * 12 + 28}px`,
           color: isSelected
             ? "var(--accent)"
             : "var(--text-secondary)",
           backgroundColor: isSelected
             ? "var(--toolbar-active)"
             : "transparent",
+          fontWeight: isSelected ? 500 : 400,
         }}
       >
-        <span>{node.path.endsWith(".canvas") ? "🎨" : "📄"}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+          {node.path.endsWith(".canvas") ? (
+            <>
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </>
+          ) : (
+            <>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </>
+          )}
+        </svg>
         <span className="truncate">{node.name}</span>
       </button>
 

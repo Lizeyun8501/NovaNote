@@ -1,12 +1,14 @@
 /* Editor Container */
 .editor-container {
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #ffffff;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
   display: flex;
   flex-direction: column;
-  max-width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* Toolbar */
@@ -15,50 +17,54 @@
   flex-wrap: wrap;
   gap: 4px;
   padding: 8px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-toolbar);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  margin-bottom: 0;
 }
 
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  min-width: 32px;
   height: 32px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
-  transition: background 0.15s, border-color 0.15s;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
   box-shadow: none;
-  padding: 0;
+  padding: 0 8px;
 }
 
 .toolbar-btn:hover {
-  background: #e5e7eb;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .toolbar-btn.is-active {
-  background: #dbeafe;
-  border-color: #3b82f6;
-  color: #1d4ed8;
+  background: var(--toolbar-active);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ProseMirror Editor Content */
 .editor-content .ProseMirror {
-  padding: 16px;
-  min-height: 300px;
+  padding: 32px 0;
+  min-height: 400px;
   outline: none;
   font-size: 16px;
-  line-height: 1.75;
-  color: #1f2937;
+  line-height: 1.8;
+  color: var(--text-primary);
 }
 
 .editor-content .ProseMirror p {
-  margin: 0 0 0.75em;
+  margin: 0 0 0.85em;
 }
 
 .editor-content .ProseMirror p:last-child {
@@ -69,48 +75,47 @@
 .editor-content .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: #9ca3af;
+  color: var(--text-muted);
   pointer-events: none;
   height: 0;
 }
 
 /* Headings */
 .editor-content .ProseMirror h1 {
-  font-size: 2em;
+  font-size: 2.25em;
   font-weight: 700;
-  margin: 0.75em 0 0.5em;
-  line-height: 1.3;
-  text-align: left;
-  color: #111827;
+  margin: 1.2em 0 0.5em;
+  line-height: 1.25;
+  color: var(--text-primary);
+  letter-spacing: -0.025em;
 }
 
 .editor-content .ProseMirror h2 {
-  font-size: 1.5em;
+  font-size: 1.75em;
   font-weight: 600;
-  margin: 0.75em 0 0.5em;
+  margin: 1em 0 0.5em;
   line-height: 1.3;
-  text-align: left;
-  color: #1f2937;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
 }
 
 .editor-content .ProseMirror h3 {
-  font-size: 1.25em;
+  font-size: 1.35em;
   font-weight: 600;
-  margin: 0.75em 0 0.5em;
-  line-height: 1.3;
-  text-align: left;
-  color: #374151;
+  margin: 0.85em 0 0.4em;
+  line-height: 1.35;
+  color: var(--text-primary);
 }
 
 /* Lists */
 .editor-content .ProseMirror ul,
 .editor-content .ProseMirror ol {
-  padding-left: 1.5em;
-  margin: 0.5em 0;
+  padding-left: 1.75em;
+  margin: 0.6em 0;
 }
 
 .editor-content .ProseMirror li {
-  margin: 0.25em 0;
+  margin: 0.3em 0;
 }
 
 .editor-content .ProseMirror ul[data-type="taskList"] {
@@ -121,7 +126,7 @@
 .editor-content .ProseMirror ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
-  gap: 0.5em;
+  gap: 0.6em;
 }
 
 .editor-content .ProseMirror ul[data-type="taskList"] li > label {
@@ -131,24 +136,26 @@
 
 /* Blockquote */
 .editor-content .ProseMirror blockquote {
-  border-left: 3px solid #d1d5db;
+  border-left: 3px solid var(--accent);
   padding-left: 1em;
-  margin: 0.75em 0;
-  color: #6b7280;
+  margin: 1em 0;
+  color: var(--text-secondary);
   font-style: italic;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 /* Code Block */
 .editor-content .ProseMirror pre {
   background: #0d1117;
   color: #c9d1d9;
-  border-radius: 6px;
-  padding: 12px 16px;
-  margin: 0.75em 0;
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  margin: 1em 0;
   overflow-x: auto;
   font-family: "Fira Code", "JetBrains Mono", "Consolas", monospace;
   font-size: 14px;
   line-height: 1.6;
+  box-shadow: var(--shadow-md);
 }
 
 .editor-content .ProseMirror pre code {
@@ -278,10 +285,10 @@
 
 /* Inline Code */
 .editor-content .ProseMirror code {
-  background: #f3f4f6;
-  color: #e11d48;
+  background: var(--bg-code);
+  color: var(--accent);
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 2px 7px;
   font-size: 0.9em;
   font-family: "Fira Code", "JetBrains Mono", "Consolas", monospace;
 }
@@ -289,8 +296,8 @@
 /* Horizontal Rule */
 .editor-content .ProseMirror hr {
   border: none;
-  border-top: 2px solid #e5e7eb;
-  margin: 1.5em 0;
+  border-top: 2px solid var(--border-color);
+  margin: 2em 0;
 }
 
 /* Bold / Italic / Strike */
@@ -308,83 +315,91 @@
 
 /* Links */
 .editor-content .ProseMirror a {
-  color: #3b82f6;
+  color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
 }
 
 .editor-content .ProseMirror a:hover {
-  color: #1d4ed8;
+  color: var(--accent-hover);
 }
 
 /* Wikilinks */
 .editor-content .ProseMirror span[data-type="wikilink"] {
-  color: #3b82f6;
-  background: #eff6ff;
-  border-radius: 3px;
-  padding: 1px 4px;
+  color: var(--accent);
+  background: var(--toolbar-active);
+  border-radius: 4px;
+  padding: 2px 6px;
   cursor: pointer;
   text-decoration: none;
   font-weight: 500;
-  border: 1px solid #bfdbfe;
-  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid var(--accent);
+  transition: all 0.15s ease;
 }
 
 .editor-content .ProseMirror span[data-type="wikilink"]:hover {
-  background: #dbeafe;
-  border-color: #93c5fd;
+  background: var(--accent);
+  color: #fff;
 }
 
 /* Dark Mode */
+@container style(--theme: dark) {
+  .editor-container {
+    background: var(--bg-editor);
+  }
+}
+
+/* Media-based dark mode fallback */
 @media (prefers-color-scheme: dark) {
   .editor-container {
-    background: #1f2937;
-    border-color: #374151;
+    background: var(--bg-editor);
+    border-color: var(--border-color);
   }
 
   .editor-toolbar {
-    background: #111827;
-    border-color: #374151;
+    background: var(--bg-toolbar);
+    border-color: var(--border-color);
   }
 
   .toolbar-btn {
-    color: #d1d5db;
+    color: var(--text-secondary);
   }
 
   .toolbar-btn:hover {
-    background: #374151;
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 
   .toolbar-btn.is-active {
-    background: #1e3a5f;
-    border-color: #3b82f6;
-    color: #93c5fd;
+    background: var(--toolbar-active);
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .editor-content .ProseMirror {
-    color: #f3f4f6;
+    color: var(--text-primary);
   }
 
   .editor-content .ProseMirror h1 {
-    color: #f9fafb;
+    color: var(--text-primary);
   }
 
   .editor-content .ProseMirror h2 {
-    color: #f3f4f6;
+    color: var(--text-primary);
   }
 
   .editor-content .ProseMirror h3 {
-    color: #e5e7eb;
+    color: var(--text-primary);
   }
 
   .editor-content .ProseMirror blockquote {
-    border-color: #4b5563;
-    color: #9ca3af;
+    border-color: var(--accent);
+    color: var(--text-secondary);
   }
 
   .editor-content .ProseMirror code {
-    background: #374151;
-    color: #fca5a5;
+    background: var(--bg-code);
+    color: var(--accent);
   }
 
   .editor-content .ProseMirror pre {
@@ -393,25 +408,25 @@
   }
 
   .editor-content .ProseMirror hr {
-    border-color: #374151;
+    border-color: var(--border-color);
   }
 
   .editor-content .ProseMirror a {
-    color: #60a5fa;
+    color: var(--accent);
   }
 
   .editor-content .ProseMirror a:hover {
-    color: #93c5fd;
+    color: var(--accent-hover);
   }
 
   .editor-content .ProseMirror span[data-type="wikilink"] {
-    color: #60a5fa;
-    background: #1e3a5f;
-    border-color: #2563eb;
+    color: var(--accent);
+    background: var(--toolbar-active);
+    border-color: var(--accent);
   }
 
   .editor-content .ProseMirror span[data-type="wikilink"]:hover {
-    background: #1e40af;
-    border-color: #3b82f6;
+    background: var(--accent);
+    color: #fff;
   }
 }

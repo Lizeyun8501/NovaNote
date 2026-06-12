@@ -22,6 +22,16 @@ export default {
         'accent': 'var(--accent)',
         'accent-hover': 'var(--accent-hover)',
       },
+      borderRadius: {
+        'theme-sm': 'var(--radius-sm)',
+        'theme-md': 'var(--radius-md)',
+        'theme-lg': 'var(--radius-lg)',
+      },
+      boxShadow: {
+        'theme-sm': 'var(--shadow-sm)',
+        'theme-md': 'var(--shadow-md)',
+        'theme-lg': 'var(--shadow-lg)',
+      },
     },
   },
   plugins: [],
