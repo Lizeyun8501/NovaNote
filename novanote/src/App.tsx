@@ -809,12 +809,11 @@ function App() {
       selectedTag={selectedTag}
       onSelectTag={handleSelectTag}
       onOpenDailyNote={handleOpenDailyNote}
-      onOpenTemplateSelector={() => setShowTemplateManager(true)}
-      onImport={() => setShowImportWizard(true)}
       onSyncClick={() => setShowSyncSettings(true)}
       onOpenAI={() => setShowAIPanel(true)}
       onOpenCalendar={() => setShowCalendar(true)}
       onOpenPlugins={() => setShowPluginMarket(true)}
+      onOpenSearch={() => setCommandPaletteOpen(true)}
     />
   );
 
