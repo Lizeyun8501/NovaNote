@@ -76,6 +76,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
   const [semanticSearching, setSemanticSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const semanticSearchCounter = useRef(0);
 
   const debouncedQuery = useDebounce(query, 300);
 
@@ -155,6 +156,7 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
   // Semantic search handler (manual trigger with Enter)
   const handleSemanticSearch = useCallback(async () => {
     if (!query.trim()) return;
+    const requestId = ++semanticSearchCounter.current;
     setSemanticSearching(true);
     setError(null);
     setSemanticResults([]);
@@ -164,11 +166,17 @@ export default function SearchBar({ onSelect, open: openProp, onOpenChange }: Se
         baseUrl: semanticBaseUrl,
         model: semanticModel,
       });
-      setSemanticResults(data);
+      if (requestId === semanticSearchCounter.current) {
+        setSemanticResults(data);
+      }
     } catch (err: unknown) {
-      setError(String(err));
+      if (requestId === semanticSearchCounter.current) {
+        setError(String(err));
+      }
     } finally {
-      setSemanticSearching(false);
+      if (requestId === semanticSearchCounter.current) {
+        setSemanticSearching(false);
+      }
     }
   }, [query, semanticBaseUrl, semanticModel]);
 

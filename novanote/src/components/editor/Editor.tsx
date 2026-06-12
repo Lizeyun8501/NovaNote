@@ -12,6 +12,27 @@ import "./Editor.css";
 
 const lowlight = createLowlight(common);
 
+interface ToolbarButton {
+  label: string;
+  action: string;
+  icon: string;
+  level?: number;
+}
+
+const TOOLBAR_BUTTONS: ToolbarButton[] = [
+  { label: "Bold", action: "bold", icon: "B" },
+  { label: "Italic", action: "italic", icon: "I" },
+  { label: "H1", action: "heading", icon: "H1", level: 1 },
+  { label: "H2", action: "heading", icon: "H2", level: 2 },
+  { label: "H3", action: "heading", icon: "H3", level: 3 },
+  { label: "Bullet List", action: "bulletList", icon: "•" },
+  { label: "Ordered List", action: "orderedList", icon: "1." },
+  { label: "Blockquote", action: "blockquote", icon: "❝" },
+  { label: "Code Block", action: "codeBlock", icon: "</>" },
+  { label: "Undo", action: "undo", icon: "↩" },
+  { label: "Redo", action: "redo", icon: "↪" },
+];
+
 interface EditorProps {
   content: string;
   onChange: (html: string, markdown: string) => void;
@@ -57,10 +78,6 @@ export default function Editor({
     },
   });
 
-  if (!editor) {
-    return null;
-  }
-
   // Notify parent about text selection changes
   useEffect(() => {
     if (!editor || !onSelectionChange) return;
@@ -76,6 +93,10 @@ export default function Editor({
       editor.off("selectionUpdate", handleSelectionUpdate);
     };
   }, [editor, onSelectionChange]);
+
+  if (!editor) {
+    return null;
+  }
 
   const runAction = (action: string, level?: number) => {
     switch (action) {
@@ -122,31 +143,10 @@ export default function Editor({
     return editor.isActive(action) ? "is-active" : "";
   };
 
-  interface ToolbarButton {
-    label: string;
-    action: string;
-    icon: string;
-    level?: number;
-  }
-
-  const buttons: ToolbarButton[] = [
-    { label: "Bold", action: "bold", icon: "B" },
-    { label: "Italic", action: "italic", icon: "I" },
-    { label: "H1", action: "heading", icon: "H1", level: 1 },
-    { label: "H2", action: "heading", icon: "H2", level: 2 },
-    { label: "H3", action: "heading", icon: "H3", level: 3 },
-    { label: "Bullet List", action: "bulletList", icon: "•" },
-    { label: "Ordered List", action: "orderedList", icon: "1." },
-    { label: "Blockquote", action: "blockquote", icon: "❝" },
-    { label: "Code Block", action: "codeBlock", icon: "</>" },
-    { label: "Undo", action: "undo", icon: "↩" },
-    { label: "Redo", action: "redo", icon: "↪" },
-  ];
-
   return (
     <div className="editor-container">
       <div className="editor-toolbar">
-        {buttons.map((btn) => (
+        {TOOLBAR_BUTTONS.map((btn) => (
           <button
             key={btn.action + (btn.level ?? "")}
             type="button"
