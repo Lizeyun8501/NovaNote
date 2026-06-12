@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Editor } from "./components/editor";
-import Sidebar from "./components/sidebar/Sidebar";
+import Sidebar, { type SidebarView } from "./components/sidebar/Sidebar";
 import SearchBar from "./components/search/SearchBar";
 import BacklinksPanel from "./components/backlinks/BacklinksPanel";
 import GraphView from "./components/graph/GraphView";
@@ -54,6 +54,7 @@ function App() {
   const [htmlContent, setHtmlContent] = useState<string>("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [showGraph, setShowGraph] = useState(false);
+  const [activeView, setActiveView] = useState<SidebarView>("all");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
@@ -799,20 +800,22 @@ function App() {
   const sidebarNode = (
     <Sidebar
       files={fileTree}
+      notes={notes}
       selectedPath={selectedPath}
+      selectedTag={selectedTag}
+      activeView={activeView}
       onSelectFile={handleSelectFile}
+      onSelectView={(view) => setActiveView(view)}
+      onSelectTag={handleSelectTag}
       onOpenVault={handleOpenVault}
       onNewNote={handleNewNote}
       onNewCanvas={handleNewCanvas}
       onRename={handleRename}
       onDelete={handleDelete}
-      selectedTag={selectedTag}
-      onSelectTag={handleSelectTag}
       onOpenDailyNote={handleOpenDailyNote}
-      onSyncClick={() => setShowSyncSettings(true)}
+      onOpenSync={() => setShowSyncSettings(true)}
       onOpenAI={() => setShowAIPanel(true)}
       onOpenCalendar={() => setShowCalendar(true)}
-      onOpenPlugins={() => setShowPluginMarket(true)}
       onOpenSearch={() => setCommandPaletteOpen(true)}
     />
   );
