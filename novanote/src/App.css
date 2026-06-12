@@ -24,9 +24,12 @@
   background: var(--text-muted);
 }
 
-/* Global transitions */
-* {
-  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+/* Theme-aware transitions for interactive elements */
+a, button, input, select, textarea,
+.nav-item, .toolbar-btn, .file-tree-item,
+.sidebar, .sidebar *,
+.card, .panel, .modal {
+  transition-property: background-color, border-color, color, opacity, box-shadow;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }

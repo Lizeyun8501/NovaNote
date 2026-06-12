@@ -63,7 +63,6 @@ export default function ActionBar({
         <ActionButton
           onClick={handleOpenVault}
           title={t("actionBar.openVault")}
-          tooltip={t("actionBar.openVault")}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -153,7 +152,7 @@ function ActionButton({
   title,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
   title: string;
 }) {
   return (

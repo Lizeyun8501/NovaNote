@@ -120,7 +120,7 @@ function QuickActionCard({
 }: {
   icon: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
 }) {
   return (
     <button
