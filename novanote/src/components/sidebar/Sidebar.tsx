@@ -326,11 +326,8 @@ function IconBarButton({
         onClick={onClick}
         className="w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-150 hover:opacity-90 active:scale-[0.95]"
         style={{
-          backgroundColor: active
-            ? "var(--accent)"
-            : accent
-              ? "var(--gradient-accent)"
-              : "transparent",
+          backgroundColor: active ? "var(--accent)" : "transparent",
+          background: accent ? "var(--gradient-accent)" : undefined,
           color: active || accent ? "#fff" : "var(--text-secondary)",
         }}
         title={title}

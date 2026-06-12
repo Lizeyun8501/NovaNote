@@ -389,7 +389,10 @@ function App() {
 
   // Handle new note creation - show template manager first
   const handleNewNote = useCallback(async () => {
-    if (!vaultPath) return;
+    if (!vaultPath) {
+      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+      return;
+    }
     setShowTemplateManager(true);
   }, [vaultPath]);
 
@@ -405,7 +408,10 @@ function App() {
 
   // Handle new canvas creation
   const handleNewCanvas = useCallback(async () => {
-    if (!vaultPath) return;
+    if (!vaultPath) {
+      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+      return;
+    }
 
     const fileName = `Untitled-canvas-${Date.now()}.canvas`;
     const data = JSON.stringify({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
@@ -453,7 +459,10 @@ function App() {
 
   // Handle opening daily note
   const handleOpenDailyNote = useCallback(async () => {
-    if (!vaultPath) return;
+    if (!vaultPath) {
+      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+      return;
+    }
 
     const dailyPath = getDailyNotePath();
 
@@ -485,7 +494,10 @@ function App() {
 
   // Handle template selection - create new note with template content
   const handleTemplateSelect = useCallback(async (content: string) => {
-    if (!vaultPath) return;
+    if (!vaultPath) {
+      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+      return;
+    }
 
     setShowTemplateSelector(false);
 
@@ -522,7 +534,10 @@ function App() {
 
   // Handle template manager selection - create new note with template content
   const handleTemplateManagerSelect = useCallback(async (content: string) => {
-    if (!vaultPath) return;
+    if (!vaultPath) {
+      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+      return;
+    }
 
     setShowTemplateManager(false);
 
@@ -621,7 +636,10 @@ function App() {
   const handleCalendarSelectDate = useCallback(
     async (dateStr: string) => {
       setShowCalendar(false);
-      if (!vaultPath) return;
+      if (!vaultPath) {
+        alert("请先打开一个仓库（点击左侧「打开仓库」）");
+        return;
+      }
 
       // Parse YYYY-MM-DD and create a daily note path
       const parts = dateStr.split("-");

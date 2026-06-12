@@ -155,7 +155,7 @@ function ActionItem({
       onClick={onClick}
       className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 hover:opacity-90 active:scale-[0.98]"
       style={{
-        backgroundColor: accent ? "var(--gradient-accent)" : "transparent",
+        background: accent ? "var(--gradient-accent)" : "transparent",
         color: accent ? "#fff" : "var(--text-secondary)",
       }}
       title={title}
