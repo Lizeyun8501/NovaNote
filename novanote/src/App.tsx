@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import { Editor } from "./components/editor";
 import Sidebar, { type SidebarView } from "./components/sidebar/Sidebar";
 import SearchBar from "./components/search/SearchBar";
@@ -13,6 +12,7 @@ import OutlinePanel from "./components/outline/OutlinePanel";
 import ImportWizard from "./components/import/ImportWizard";
 import CanvasEditor from "./components/canvas/CanvasEditor";
 import CommandPalette from "./components/command-palette/CommandPalette";
+import type { Command } from "./components/command-palette/CommandPalette";
 import { SetupPassword } from "./components/sync/SetupPassword";
 import { SyncSettings } from "./components/sync/SyncSettings";
 import AIPanel from "./components/ai/AIPanel";
@@ -21,16 +21,13 @@ import PluginMarket from "./components/plugin/PluginMarket";
 import SqlQueryPanel from "./components/sql/SqlQueryPanel";
 import MindMapView from "./components/mindmap/MindMapView";
 import TableView from "./components/tableview/TableView";
-import type { Command } from "./components/command-palette/CommandPalette";
 import { getDailyNotePath, getDailyNoteTemplate } from "./components/daily-note/dailyNote";
-import { buildFileTree } from "./utils/buildFileTree";
 import { MobileLayout } from "./components/layout/MobileLayout";
 import WelcomeScreen from "./components/welcome/WelcomeScreen";
 import type { NoteMeta, FileTreeNode } from "./types";
+import * as NoteStorage from "./storage/notes";
 import "./App.css";
 import "./styles/responsive.css";
-
-const VAULT_STORAGE_KEY = "novanote-vault";
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(false);
@@ -46,7 +43,6 @@ function useMediaQuery(query: string): boolean {
 
 function App() {
   const { t } = useTranslation();
-  const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [fileTree, setFileTree] = useState<FileTreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -95,156 +91,34 @@ function App() {
     };
   }, []);
 
-  // Open vault by path
-  const openVault = useCallback(async (path: string) => {
-    try {
-      await invoke("vault_open", { path });
-      setVaultPath(path);
-
-      // Re-scan and list notes
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-    } catch (err) {
-      console.error("Failed to open vault:", err);
+  // Load notes from storage on mount
+  useEffect(() => {
+    const all = NoteStorage.getAllNotes();
+    if (all.length === 0) {
+      // First visit: create a sample welcome notebook
+      NoteStorage.createNotebook("我的笔记本");
+      const fresh = NoteStorage.getAllNotes();
+      setNotes(fresh);
+      setFileTree(NoteStorage.buildTree(fresh));
+    } else {
+      setNotes(all);
+      setFileTree(NoteStorage.buildTree(all));
     }
   }, []);
 
-  // Handle open vault button
-  const handleOpenVault = useCallback(async () => {
-    const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (stored) {
-      await openVault(stored);
+  // Refresh helpers
+  const refresh = useCallback(() => {
+    const all = NoteStorage.getAllNotes();
+    setNotes(all);
+    if (activeView === "tags" && selectedTag) {
+      setFileTree(NoteStorage.buildTree(NoteStorage.getNotesByTag(selectedTag)));
+    } else {
+      setFileTree(NoteStorage.buildTree(all));
     }
-  }, [openVault]);
-
-  // Auto-open last vault on mount
-  useEffect(() => {
-    const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (stored) {
-      openVault(stored);
-    }
-  }, [openVault]);
-
-  // File watcher: start when vault is opened, poll for external changes
-  useEffect(() => {
-    if (!vaultPath) return;
-
-    // Start the file watcher
-    invoke("vault_start_watcher").catch((err) =>
-      console.error("Failed to start file watcher:", err)
-    );
-
-    // Poll for file change events every 2 seconds
-    const pollInterval = setInterval(async () => {
-      try {
-        const events = await invoke<
-          { type: string; path: string; from?: string; to?: string }[]
-        >("vault_get_watcher_events");
-
-        for (const event of events) {
-          const relativePath = event.path
-            ? event.path.replace(vaultPath + "/", "").replace(vaultPath + "\\", "")
-            : null;
-
-          switch (event.type) {
-            case "Modified":
-              if (relativePath && relativePath === currentPathRef.current) {
-                // Currently selected file was modified externally - reload content
-                try {
-                  const content: string = await invoke("vault_read_note", {
-                    relativePath: relativePath,
-                  });
-                  setNoteContent(content);
-                  setHtmlContent(content);
-                } catch (readErr) {
-                  console.error("Failed to reload modified note:", readErr);
-                }
-              }
-              // Re-index the modified file
-              try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
-              } catch (scanErr) {
-                console.error("Failed to re-scan after modification:", scanErr);
-              }
-              break;
-
-            case "Created":
-              // New file created externally - refresh the file list
-              try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
-              } catch (scanErr) {
-                console.error("Failed to re-scan after creation:", scanErr);
-              }
-              break;
-
-            case "Deleted":
-              // File deleted externally - refresh file list and clear if current
-              if (relativePath && relativePath === currentPathRef.current) {
-                setSelectedPath(null);
-                currentPathRef.current = null;
-                setHtmlContent("");
-                setNoteContent("");
-              }
-              try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
-              } catch (scanErr) {
-                console.error("Failed to re-scan after deletion:", scanErr);
-              }
-              break;
-
-            case "Renamed":
-              // File renamed externally - refresh file list
-              if (relativePath && relativePath === currentPathRef.current) {
-                // If the current file was renamed, try to follow it
-                const newRelativePath = event.to
-                  ? event.to.replace(vaultPath + "/", "").replace(vaultPath + "\\", "")
-                  : null;
-                if (newRelativePath) {
-                  setSelectedPath(newRelativePath);
-                  currentPathRef.current = newRelativePath;
-                } else {
-                  setSelectedPath(null);
-                  currentPathRef.current = null;
-                  setHtmlContent("");
-                  setNoteContent("");
-                }
-              }
-              try {
-                await invoke("vault_scan");
-                const noteList: NoteMeta[] = await invoke("vault_list_notes");
-                setNotes(noteList);
-                setFileTree(buildFileTree(noteList));
-              } catch (scanErr) {
-                console.error("Failed to re-scan after rename:", scanErr);
-              }
-              break;
-          }
-        }
-      } catch (err) {
-        // Silently ignore poll errors (vault might be closed)
-      }
-    }, 2000);
-
-    return () => {
-      clearInterval(pollInterval);
-      invoke("vault_stop_watcher").catch(() => {});
-    };
-  }, [vaultPath]);
+  }, [activeView, selectedTag]);
 
   // Select a file and load its content
-  const handleSelectFile = useCallback(async (path: string) => {
-    // Check if it's a canvas file
+  const handleSelectFile = useCallback((path: string) => {
     if (path.endsWith(".canvas")) {
       setCanvasPath(path);
       setSelectedPath(path);
@@ -253,63 +127,29 @@ function App() {
       setHtmlContent("");
       return;
     }
-
-    // Clear canvas state when selecting a regular note
     setCanvasPath(null);
-
-    try {
-      const content: string = await invoke("vault_read_note", {
-        relativePath: path,
-      });
-      setSelectedPath(path);
-      currentPathRef.current = path;
-      setNoteContent(content);
-      setHtmlContent(content);
-    } catch (err) {
-      console.error("Failed to read note:", err);
-    }
+    const content = NoteStorage.getNoteContent(path);
+    setSelectedPath(path);
+    currentPathRef.current = path;
+    setNoteContent(content);
+    setHtmlContent(content);
   }, []);
 
   // Handle wikilink click - navigate to target note, create if doesn't exist
-  const handleLinkClick = useCallback(
-    async (target: string) => {
-      if (!vaultPath) return;
-
-      // Determine the relative path for the target
-      const targetPath = target.endsWith(".md") ? target : `${target}.md`;
-
-      try {
-        // Try to read the note first
-        await invoke("vault_read_note", { relativePath: targetPath });
-        // Note exists, navigate to it
-        await handleSelectFile(targetPath);
-      } catch {
-        // Note doesn't exist, ask user for confirmation before creating
-        const confirmed = window.confirm(
-          t("app.createLinkedNote", { target })
-        );
-        if (!confirmed) return;
-
-        try {
-          const content = `# ${target}\n\n`;
-          await invoke("vault_write_note", {
-            relativePath: targetPath,
-            content,
-          });
-          // Re-scan to update the list
-          await invoke("vault_scan");
-          const noteList: NoteMeta[] = await invoke("vault_list_notes");
-          setNotes(noteList);
-          setFileTree(buildFileTree(noteList));
-          // Navigate to the new note
-          await handleSelectFile(targetPath);
-        } catch (writeErr) {
-          console.error("Failed to create linked note:", writeErr);
-        }
-      }
-    },
-    [vaultPath, handleSelectFile],
-  );
+  const handleLinkClick = useCallback(async (target: string) => {
+    const targetPath = target.endsWith(".md") ? target : `${target}.md`;
+    const existing = NoteStorage.getNoteContent(targetPath);
+    if (existing) {
+      await handleSelectFile(targetPath);
+      return;
+    }
+    const confirmed = window.confirm(t("app.createLinkedNote", { target }));
+    if (!confirmed) return;
+    const content = `# ${target}\n\n`;
+    NoteStorage.writeNote(targetPath, content);
+    refresh();
+    await handleSelectFile(targetPath);
+  }, [handleSelectFile, refresh, t]);
 
   // Handle editor content changes (save with debounce)
   const handleChange = useCallback(
@@ -320,84 +160,104 @@ function App() {
       const path = currentPathRef.current;
       if (!path) return;
 
-      // Debounce save
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
-      saveTimerRef.current = setTimeout(async () => {
-        try {
-          await invoke("vault_write_note", {
-            relativePath: path,
-            content: markdown,
-          });
-        } catch (err) {
-          console.error("Failed to save note:", err);
-        }
+      saveTimerRef.current = setTimeout(() => {
+        NoteStorage.writeNote(path, markdown);
       }, 500);
     },
-    [],
+    []
   );
 
   // Handle search result selection
-  const handleSearchSelect = useCallback(async (note: NoteMeta) => {
-    try {
-      const content: string = await invoke("vault_read_note", {
-        relativePath: note.relative_path,
-      });
-      setSelectedPath(note.relative_path);
-      currentPathRef.current = note.relative_path;
-      setNoteContent(content);
-      setHtmlContent(content);
-    } catch (err) {
-      console.error("Failed to read note from search:", err);
-    }
+  const handleSearchSelect = useCallback((note: NoteMeta) => {
+    const content = NoteStorage.getNoteContent(note.relative_path);
+    setSelectedPath(note.relative_path);
+    currentPathRef.current = note.relative_path;
+    setNoteContent(content);
+    setHtmlContent(content);
   }, []);
 
   // Handle file rename
-  const handleRename = useCallback(async (oldPath: string, newPath: string) => {
-    try {
-      await invoke("vault_rename_note", { oldRelativePath: oldPath, newRelativePath: newPath });
-      // Refresh tree
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-      if (selectedPath === oldPath) {
-        setSelectedPath(newPath);
-        currentPathRef.current = newPath;
-      }
-    } catch (err) {
-      console.error("Rename failed:", err);
+  const handleRename = useCallback((oldPath: string, newPath: string) => {
+    NoteStorage.renameNote(oldPath, newPath);
+    refresh();
+    if (selectedPath === oldPath) {
+      setSelectedPath(newPath);
+      currentPathRef.current = newPath;
     }
-  }, [selectedPath]);
+  }, [selectedPath, refresh]);
 
   // Handle file delete
-  const handleDelete = useCallback(async (path: string) => {
-    try {
-      await invoke("vault_delete_note", { relativePath: path });
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-      if (selectedPath === path) {
-        setSelectedPath(null);
-        currentPathRef.current = null;
-        setHtmlContent("");
-        setNoteContent("");
-      }
-    } catch (err) {
-      console.error("Delete failed:", err);
+  const handleDelete = useCallback((path: string) => {
+    NoteStorage.deleteNote(path);
+    refresh();
+    if (selectedPath === path) {
+      setSelectedPath(null);
+      currentPathRef.current = null;
+      setHtmlContent("");
+      setNoteContent("");
     }
-  }, [selectedPath]);
+  }, [selectedPath, refresh]);
 
-  // Handle new note creation - show template manager first
-  const handleNewNote = useCallback(async () => {
-    if (!vaultPath) {
-      alert("请先打开一个仓库（点击左侧「打开仓库」）");
+  // Handle new note creation (opens template manager)
+  const handleNewNote = useCallback((parentDir?: string) => {
+    setShowTemplateManager(true);
+    setSelectedPath(null);
+    currentPathRef.current = null;
+    // save parent dir for new note
+    (window as unknown as { _novanoteNewParent?: string })._novanoteNewParent = parentDir;
+  }, []);
+
+  // Handle new canvas creation
+  const handleNewCanvas = useCallback((parentDir?: string) => {
+    const fileName = NoteStorage.generateNotePath(parentDir, "未命名画布").replace(/\.md$/, ".canvas");
+    const data = JSON.stringify({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
+    NoteStorage.writeNote(fileName, data);
+    refresh();
+    setCanvasPath(fileName);
+    setSelectedPath(fileName);
+    currentPathRef.current = fileName;
+    setNoteContent("");
+    setHtmlContent("");
+  }, [refresh]);
+
+  // Handle tag selection - filter file tree
+  const handleSelectTag = useCallback((tag: string) => {
+    if (!tag) {
+      setSelectedTag(null);
+      const all = NoteStorage.getAllNotes();
+      setFileTree(NoteStorage.buildTree(all));
       return;
     }
-    setShowTemplateManager(true);
-  }, [vaultPath]);
+    setSelectedTag(tag);
+    const filtered = NoteStorage.getNotesByTag(tag);
+    setFileTree(NoteStorage.buildTree(filtered));
+  }, []);
 
-  // Handle heading click from outline panel - scroll editor to heading
+  // Handle opening daily note
+  const handleOpenDailyNote = useCallback(() => {
+    const dailyPath = getDailyNotePath();
+    const content = NoteStorage.getNoteContent(dailyPath);
+    if (content) {
+      setSelectedPath(dailyPath);
+      currentPathRef.current = dailyPath;
+      setNoteContent(content);
+      setHtmlContent(content);
+    } else {
+      const template = getDailyNoteTemplate();
+      NoteStorage.writeNote(dailyPath, template);
+      refresh();
+      setSelectedPath(dailyPath);
+      currentPathRef.current = dailyPath;
+      setNoteContent(template);
+      setHtmlContent(template);
+    }
+    setCanvasPath(null);
+  }, [refresh]);
+
+  // Handle heading click from outline panel
   const handleHeadingClick = useCallback((headingId: string) => {
     const editorEl = document.querySelector(".editor-content .ProseMirror");
     if (!editorEl) return;
@@ -407,225 +267,110 @@ function App() {
     }
   }, []);
 
-  // Handle new canvas creation
-  const handleNewCanvas = useCallback(async () => {
-    if (!vaultPath) {
-      alert("请先打开一个仓库（点击左侧「打开仓库」）");
-      return;
-    }
-
-    const fileName = `Untitled-canvas-${Date.now()}.canvas`;
-    const data = JSON.stringify({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
-
-    try {
-      await invoke("vault_write_canvas", {
-        relativePath: fileName,
-        data,
-      });
-
-      // Re-scan to update the list
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-
-      // Select the new canvas
-      setCanvasPath(fileName);
-      setSelectedPath(fileName);
-      currentPathRef.current = fileName;
-      setNoteContent("");
-      setHtmlContent("");
-    } catch (err) {
-      console.error("Failed to create canvas:", err);
-    }
-  }, [vaultPath]);
-
-  // Handle tag selection - filter file tree by tag
-  const handleSelectTag = useCallback(async (tag: string) => {
-    if (!tag) {
-      // Clear tag filter
-      setSelectedTag(null);
-      setFileTree(buildFileTree(notes));
-      return;
-    }
-
-    setSelectedTag(tag);
-    try {
-      const filteredNotes: NoteMeta[] = await invoke("vault_get_notes_by_tag", { tag });
-      setFileTree(buildFileTree(filteredNotes));
-    } catch (err) {
-      console.error("Failed to filter notes by tag:", err);
-    }
-  }, [notes]);
-
-  // Handle opening daily note
-  const handleOpenDailyNote = useCallback(async () => {
-    if (!vaultPath) {
-      alert("请先打开一个仓库（点击左侧「打开仓库」）");
-      return;
-    }
-
-    const dailyPath = getDailyNotePath();
-
-    try {
-      // Try to read the daily note
-      const content: string = await invoke("vault_read_note", { relativePath: dailyPath });
-      setSelectedPath(dailyPath);
-      currentPathRef.current = dailyPath;
-      setNoteContent(content);
-      setHtmlContent(content);
-    } catch {
-      // Daily note doesn't exist, create it with template
-      try {
-        const content = getDailyNoteTemplate();
-        await invoke("vault_write_note", { relativePath: dailyPath, content });
-        await invoke("vault_scan");
-        const noteList: NoteMeta[] = await invoke("vault_list_notes");
-        setNotes(noteList);
-        setFileTree(buildFileTree(noteList));
-        setSelectedPath(dailyPath);
-        currentPathRef.current = dailyPath;
-        setNoteContent(content);
-        setHtmlContent(content);
-      } catch (writeErr) {
-        console.error("Failed to create daily note:", writeErr);
-      }
-    }
-  }, [vaultPath]);
-
   // Handle template selection - create new note with template content
-  const handleTemplateSelect = useCallback(async (content: string) => {
-    if (!vaultPath) {
-      alert("请先打开一个仓库（点击左侧「打开仓库」）");
-      return;
-    }
-
+  const handleTemplateSelect = useCallback((content: string) => {
     setShowTemplateSelector(false);
-
-    const fileName = `Untitled-${Date.now()}.md`;
-
-    try {
-      await invoke("vault_write_note", { relativePath: fileName, content });
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-      setSelectedPath(fileName);
-      currentPathRef.current = fileName;
-      setNoteContent(content);
-      setHtmlContent(content);
-    } catch (err) {
-      console.error("Failed to create note from template:", err);
-    }
-  }, [vaultPath]);
+    const parentDir = (window as unknown as { _novanoteNewParent?: string })._novanoteNewParent;
+    const fileName = NoteStorage.generateNotePath(parentDir || undefined, "未命名");
+    NoteStorage.writeNote(fileName, content);
+    refresh();
+    setSelectedPath(fileName);
+    currentPathRef.current = fileName;
+    setNoteContent(content);
+    setHtmlContent(content);
+  }, [refresh]);
 
   // Handle saving current note as template
-  const handleSaveAsTemplate = useCallback(async () => {
+  const handleSaveAsTemplate = useCallback(() => {
     const path = currentPathRef.current;
     if (!path) return;
-
+    const content = NoteStorage.getNoteContent(path);
     const templateName = path.replace(/\.md$/, "");
     try {
-      const content: string = await invoke("vault_read_note", { relativePath: path });
-      await invoke("vault_save_as_template", { name: templateName, content });
+      const templates = JSON.parse(localStorage.getItem("novanote-templates") || "[]");
+      templates.push({ name: templateName, content });
+      localStorage.setItem("novanote-templates", JSON.stringify(templates));
     } catch (err) {
       console.error("Failed to save as template:", err);
     }
   }, []);
 
   // Handle template manager selection - create new note with template content
-  const handleTemplateManagerSelect = useCallback(async (content: string) => {
-    if (!vaultPath) {
-      alert("请先打开一个仓库（点击左侧「打开仓库」）");
-      return;
-    }
-
+  const handleTemplateManagerSelect = useCallback((content: string) => {
     setShowTemplateManager(false);
-
-    // If content is empty (user clicked "Skip"), create a blank note
-    const noteContent = content || `# Untitled\n\nStart writing here.\n`;
-    const fileName = `Untitled-${Date.now()}.md`;
-
-    try {
-      await invoke("vault_write_note", { relativePath: fileName, content: noteContent });
-      await invoke("vault_scan");
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-      setSelectedPath(fileName);
-      currentPathRef.current = fileName;
-      setNoteContent(noteContent);
-      setHtmlContent(noteContent);
-    } catch (err) {
-      console.error("Failed to create note from template:", err);
-    }
-  }, [vaultPath]);
+    const parentDir = (window as unknown as { _novanoteNewParent?: string })._novanoteNewParent;
+    const noteContent = content || `# 未命名\n\n在这里开始书写。\n`;
+    const fileName = NoteStorage.generateNotePath(parentDir || undefined, "未命名");
+    NoteStorage.writeNote(fileName, noteContent);
+    refresh();
+    setSelectedPath(fileName);
+    currentPathRef.current = fileName;
+    setNoteContent(noteContent);
+    setHtmlContent(noteContent);
+  }, [refresh]);
 
   // Handle saving template from TemplateManager
-  const handleTemplateManagerSave = useCallback(async (name: string, content: string) => {
-    const path = currentPathRef.current;
-    const templateContent = path
-      ? await invoke("vault_read_note", { relativePath: path }).catch(() => content)
-      : content;
+  const handleTemplateManagerSave = useCallback((name: string, content: string) => {
     try {
-      await invoke("vault_save_as_template", { name, content: templateContent });
+      const templates = JSON.parse(localStorage.getItem("novanote-templates") || "[]");
+      templates.push({ name, content });
+      localStorage.setItem("novanote-templates", JSON.stringify(templates));
     } catch (err) {
       console.error("Failed to save template:", err);
     }
   }, []);
 
+  // Create notebook (new top-level directory)
+  const handleCreateNotebook = useCallback((name: string) => {
+    NoteStorage.createNotebook(name);
+    refresh();
+  }, [refresh]);
+
+  // Create subdirectory (by creating a note inside it)
+  const handleCreateSubdir = useCallback((parentDir: string, dirName: string) => {
+    const cleanName = dirName.trim();
+    if (!cleanName) return;
+    const prefix = parentDir ? parentDir + "/" : "";
+    const notePath = prefix + cleanName + "/欢迎.md";
+    NoteStorage.writeNote(notePath, `# ${cleanName}\n\n新子目录的欢迎页面。\n`);
+    refresh();
+  }, [refresh]);
+
   // Handle AI panel - tags generated
-  const handleAITagsGenerated = useCallback(async (tags: string[]) => {
-    try {
-      // Add tags to current note by updating its content with frontmatter tags
-      const path = currentPathRef.current;
-      if (!path) return;
-      const content: string = await invoke("vault_read_note", { relativePath: path });
-      // Add or update tags in frontmatter
-      let newContent = content;
-      const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
-      if (frontmatterRegex.test(content)) {
-        // Update existing tags
-        newContent = content.replace(/^tags:\s*\[.*?\]/m, `tags: [${tags.map((t) => `"${t}"`).join(", ")}]`);
-        if (newContent === content) {
-          // Add tags line to existing frontmatter
-          newContent = content.replace(/(^---\n)/, `$1tags: [${tags.map((t) => `"${t}"`).join(", ")}]\n`);
-        }
-      } else {
-        // Add new frontmatter
-        const tagsLine = `---\ntags: [${tags.map((t) => `"${t}"`).join(", ")}]\n---\n\n`;
-        newContent = tagsLine + content;
+  const handleAITagsGenerated = useCallback((tags: string[]) => {
+    const path = currentPathRef.current;
+    if (!path) return;
+    const content = NoteStorage.getNoteContent(path);
+    let newContent = content;
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+    if (frontmatterRegex.test(content)) {
+      newContent = content.replace(/^tags:\s*\[.*?\]/m, `tags: [${tags.map((tg) => `"${tg}"`).join(", ")}]`);
+      if (newContent === content) {
+        newContent = content.replace(/(^---\n)/, `$1tags: [${tags.map((tg) => `"${tg}"`).join(", ")}]\n`);
       }
-      await invoke("vault_write_note", { relativePath: path, content: newContent });
-      // Refresh notes
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-    } catch (err) {
-      console.error("Failed to apply AI tags:", err);
+    } else {
+      const tagsLine = `---\ntags: [${tags.map((tg) => `"${tg}"`).join(", ")}]\n---\n\n`;
+      newContent = tagsLine + content;
     }
-  }, []);
+    NoteStorage.writeNote(path, newContent);
+    refresh();
+  }, [refresh]);
 
   // Handle AI panel - summary generated
-  const handleAISummaryGenerated = useCallback(async (summary: string) => {
-    try {
-      const path = currentPathRef.current;
-      if (!path) return;
-      const content: string = await invoke("vault_read_note", { relativePath: path });
-      // Add summary to frontmatter
-      let newContent = content;
-      const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
-      if (frontmatterRegex.test(content)) {
-        newContent = content.replace(/^summary:\s*.*\n?/m, "");
-        newContent = newContent.replace(/(^---\n)/, `$1summary: "${summary.replace(/"/g, '\\"')}"\n`);
-      } else {
-        const summaryLine = `---\nsummary: "${summary.replace(/"/g, '\\"')}"\n---\n\n`;
-        newContent = summaryLine + content;
-      }
-      await invoke("vault_write_note", { relativePath: path, content: newContent });
-    } catch (err) {
-      console.error("Failed to apply AI summary:", err);
+  const handleAISummaryGenerated = useCallback((summary: string) => {
+    const path = currentPathRef.current;
+    if (!path) return;
+    const content = NoteStorage.getNoteContent(path);
+    let newContent = content;
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+    if (frontmatterRegex.test(content)) {
+      newContent = content.replace(/^summary:\s*.*\n?/m, "");
+      newContent = newContent.replace(/(^---\n)/, `$1summary: "${summary.replace(/"/g, '\\"')}"\n`);
+    } else {
+      const summaryLine = `---\nsummary: "${summary.replace(/"/g, '\\"')}"\n---\n\n`;
+      newContent = summaryLine + content;
     }
+    NoteStorage.writeNote(path, newContent);
   }, []);
 
   // Handle AI panel - writing result
@@ -634,52 +379,33 @@ function App() {
   }, []);
 
   // Handle calendar date selection
-  const handleCalendarSelectDate = useCallback(
-    async (dateStr: string) => {
-      setShowCalendar(false);
-      if (!vaultPath) {
-        alert("请先打开一个仓库（点击左侧「打开仓库」）");
-        return;
-      }
-
-      // Parse YYYY-MM-DD and create a daily note path
-      const parts = dateStr.split("-");
-      const dailyPath = `daily/${parts[0]}-${parts[1]}-${parts[2]}.md`;
-
-      try {
-        const content: string = await invoke("vault_read_note", { relativePath: dailyPath });
-        setSelectedPath(dailyPath);
-        currentPathRef.current = dailyPath;
-        setNoteContent(content);
-        setHtmlContent(content);
-        setCanvasPath(null);
-      } catch {
-        // Create the daily note
-        try {
-          const template = getDailyNoteTemplate();
-          await invoke("vault_write_note", { relativePath: dailyPath, content: template });
-          await invoke("vault_scan");
-          const noteList: NoteMeta[] = await invoke("vault_list_notes");
-          setNotes(noteList);
-          setFileTree(buildFileTree(noteList));
-          setSelectedPath(dailyPath);
-          currentPathRef.current = dailyPath;
-          setNoteContent(template);
-          setHtmlContent(template);
-          setCanvasPath(null);
-        } catch (writeErr) {
-          console.error("Failed to create daily note from calendar:", writeErr);
-        }
-      }
-    },
-    [vaultPath],
-  );
+  const handleCalendarSelectDate = useCallback((dateStr: string) => {
+    setShowCalendar(false);
+    const parts = dateStr.split("-");
+    const dailyPath = `daily/${parts[0]}-${parts[1]}-${parts[2]}.md`;
+    const content = NoteStorage.getNoteContent(dailyPath);
+    if (content) {
+      setSelectedPath(dailyPath);
+      currentPathRef.current = dailyPath;
+      setNoteContent(content);
+      setHtmlContent(content);
+      setCanvasPath(null);
+    } else {
+      const template = getDailyNoteTemplate();
+      NoteStorage.writeNote(dailyPath, template);
+      refresh();
+      setSelectedPath(dailyPath);
+      currentPathRef.current = dailyPath;
+      setNoteContent(template);
+      setHtmlContent(template);
+      setCanvasPath(null);
+    }
+  }, [refresh]);
 
   // Build set of dates that have notes (for calendar dot indicators)
   const notesWithDates = useMemo(() => {
     const dates = new Set<string>();
     for (const note of notes) {
-      // Match daily note pattern: daily/YYYY-MM-DD.md
       const match = note.relative_path.match(/daily\/(\d{4}-\d{2}-\d{2})\.md$/);
       if (match) {
         dates.add(match[1]);
@@ -688,16 +414,10 @@ function App() {
     return dates;
   }, [notes]);
 
-  // Handle import complete - refresh the file tree
-  const handleImportComplete = useCallback(async (_importedNotes: NoteMeta[]) => {
-    try {
-      const noteList: NoteMeta[] = await invoke("vault_list_notes");
-      setNotes(noteList);
-      setFileTree(buildFileTree(noteList));
-    } catch (err) {
-      console.error("Failed to refresh notes after import:", err);
-    }
-  }, []);
+  // Handle import complete
+  const handleImportComplete = useCallback(() => {
+    refresh();
+  }, [refresh]);
 
   // Built-in commands for the Command Palette
   const commands: Command[] = useMemo(
@@ -794,7 +514,7 @@ function App() {
         execute: () => setShowTableView(true),
       },
     ],
-    [handleNewNote, handleNewCanvas, handleOpenDailyNote, t],
+    [handleNewNote, handleNewCanvas, handleOpenDailyNote, t]
   );
 
   const sidebarNode = (
@@ -807,7 +527,8 @@ function App() {
       onSelectFile={handleSelectFile}
       onSelectView={(view) => setActiveView(view)}
       onSelectTag={handleSelectTag}
-      onOpenVault={handleOpenVault}
+      onCreateNotebook={handleCreateNotebook}
+      onCreateSubdir={handleCreateSubdir}
       onNewNote={handleNewNote}
       onNewCanvas={handleNewCanvas}
       onRename={handleRename}
@@ -901,11 +622,9 @@ function App() {
                 className="text-sm"
                 style={{ color: "var(--text-muted)" }}
               >
-                {vaultPath
-                  ? t("app.selectNote")
-                  : t("app.openVaultToStart")}
+                {notes.length > 0 ? t("app.selectNote") : t("app.openVaultToStart")}
               </p>
-              {vaultPath && (
+              {notes.length > 0 && (
                 <button
                   onClick={() => setShowGraph(true)}
                   className="px-2.5 py-1.5 rounded-md text-sm transition-all flex items-center gap-1.5"
@@ -955,7 +674,7 @@ function App() {
               onNewNote={handleNewNote}
               onOpenDailyNote={handleOpenDailyNote}
               onOpenGraph={() => setShowGraph(true)}
-              hasVault={!!vaultPath}
+              hasVault={notes.length > 0}
             />
           )}
           {showOutline && !canvasPath && selectedPath && (
@@ -1019,9 +738,7 @@ function App() {
 
       {showPasswordSetup && (
         <SetupPassword
-          onComplete={() => {
-            setShowPasswordSetup(false);
-          }}
+          onComplete={() => setShowPasswordSetup(false)}
           onCancel={() => setShowPasswordSetup(false)}
         />
       )}
