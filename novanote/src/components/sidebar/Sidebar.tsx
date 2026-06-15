@@ -71,6 +71,7 @@ export default function Sidebar({
   );
 
   const handleOpenLocalVault = useCallback(async () => {
+    // 优先使用 Tauri 原生对话框
     try {
       const selected = await open({
         directory: true,
@@ -81,9 +82,30 @@ export default function Sidebar({
         const path = typeof selected === "string" ? selected : String(selected);
         onOpenVault(path);
       }
-    } catch (err) {
-      console.error("Failed to open directory dialog:", err);
+      return;
+    } catch {
+      // Tauri 不可用，回退到浏览器 API
     }
+
+    // 浏览器回退：使用 File System Access API
+    if ("showDirectoryPicker" in window) {
+      try {
+        const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+        if (dirHandle) {
+          // 浏览器环境下用目录名模拟路径
+          onOpenVault(dirHandle.name);
+        }
+      } catch (err) {
+        // 用户取消选择
+        if ((err as DOMException).name !== "AbortError") {
+          console.error("Directory picker failed:", err);
+        }
+      }
+      return;
+    }
+
+    // 最终回退：提示用户
+    alert("打开本地仓库功能需要在 Tauri 桌面端使用，或使用支持 File System Access API 的浏览器（Chrome/Edge）。");
   }, [onOpenVault]);
 
   return (
