@@ -254,15 +254,23 @@ export default function Sidebar({
         >
           我的笔记
         </FolderItem>
-        {notesFolderOpen && files.length > 0 && (
+        {notesFolderOpen && (
           <div style={{ paddingLeft: "8px" }}>
-            <FileTree
-              files={files}
-              selectedPath={selectedPath}
-              onSelect={onSelectFile}
-              onRename={onRename}
-              onDelete={onDelete}
-            />
+            {files.length > 0 ? (
+              <FileTree
+                files={files}
+                selectedPath={selectedPath}
+                onSelect={onSelectFile}
+                onRename={onRename}
+                onDelete={onDelete}
+              />
+            ) : (
+              <div className="px-3 py-4 text-center">
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  暂无笔记，点击上方 + 创建
+                </p>
+              </div>
+            )}
           </div>
         )}
 

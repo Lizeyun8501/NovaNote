@@ -459,6 +459,44 @@ function App() {
     }
   }, [notes]);
 
+  // Filter notes based on activeView
+  const filteredNotes = useMemo(() => {
+    if (!vaultPath) return notes;
+    switch (activeView) {
+      case "recent":
+        return [...notes].sort(
+          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        );
+      case "favorites":
+        return notes.filter((n) => n.tags.includes("favorite") || n.tags.includes("收藏"));
+      case "pinned":
+        return notes.filter((n) => n.tags.includes("pinned") || n.tags.includes("置顶"));
+      case "encrypted":
+        return notes.filter((n) => n.tags.includes("encrypted") || n.tags.includes("加密"));
+      case "todo":
+        return notes.filter((n) => n.tags.includes("todo") || n.tags.includes("待办"));
+      case "memo":
+        return notes.filter((n) => n.tags.includes("memo") || n.tags.includes("备忘"));
+      case "images":
+        return notes.filter((n) => /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(n.relative_path));
+      case "attachments":
+        return notes.filter((n) => /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar)$/i.test(n.relative_path));
+      case "voice":
+        return notes.filter((n) => /\.(mp3|wav|ogg|m4a|aac)$/i.test(n.relative_path));
+      case "all":
+      default:
+        return notes;
+    }
+  }, [notes, activeView, vaultPath]);
+
+  // Build file tree from filtered notes when view changes
+  const sidebarFileTree = useMemo(() => {
+    if (activeView === "folder" || activeView === "tags" || activeView === "dynamic") {
+      return fileTree;
+    }
+    return buildFileTree(filteredNotes);
+  }, [activeView, fileTree, filteredNotes]);
+
   // Handle opening daily note
   const handleOpenDailyNote = useCallback(async () => {
     if (!vaultPath) {
@@ -800,8 +838,8 @@ function App() {
 
   const sidebarNode = (
     <Sidebar
-      files={fileTree}
-      notes={notes}
+      files={sidebarFileTree}
+      notes={filteredNotes}
       selectedPath={selectedPath}
       selectedTag={selectedTag}
       activeView={activeView}
