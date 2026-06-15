@@ -112,10 +112,11 @@ function App() {
   }, []);
 
   // Handle open vault button
-  const handleOpenVault = useCallback(async () => {
-    const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (stored) {
-      await openVault(stored);
+  const handleOpenVault = useCallback(async (path?: string) => {
+    const vaultPathToOpen = path || localStorage.getItem(VAULT_STORAGE_KEY);
+    if (vaultPathToOpen) {
+      localStorage.setItem(VAULT_STORAGE_KEY, vaultPathToOpen);
+      await openVault(vaultPathToOpen);
     }
   }, [openVault]);
 

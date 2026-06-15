@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { FileTreeNode, NoteMeta } from "../../types";
 import FileTree from "./FileTree";
 import TagsPanel from "../tags/TagsPanel";
@@ -30,7 +31,7 @@ interface SidebarProps {
   onSelectTag: (tag: string) => void;
   onNewNote: () => void;
   onNewCanvas?: () => void;
-  onOpenVault: () => void;
+  onOpenVault: (path?: string) => void;
   onRename?: (oldPath: string, newPath: string) => void;
   onDelete?: (path: string) => void;
   onOpenDailyNote?: () => void;
@@ -69,6 +70,22 @@ export default function Sidebar({
     [onSelectView],
   );
 
+  const handleOpenLocalVault = useCallback(async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择本地仓库文件夹",
+      });
+      if (selected) {
+        const path = typeof selected === "string" ? selected : String(selected);
+        onOpenVault(path);
+      }
+    } catch (err) {
+      console.error("Failed to open directory dialog:", err);
+    }
+  }, [onOpenVault]);
+
   return (
     <aside
       className="flex flex-col border-r h-screen overflow-y-auto"
@@ -86,13 +103,15 @@ export default function Sidebar({
           borderColor: "var(--border-color)",
         }}
       >
-        <span className="text-base font-bold" style={{ color: "var(--text-primary" }}>
+        <span className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
           笔记本目录
         </span>
         <div className="flex items-center gap-1">
-          <IconBtn onClick={onOpenVault} title="打开仓库">
+          <IconBtn onClick={handleOpenLocalVault} title="打开本地仓库">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
             </svg>
           </IconBtn>
           <IconBtn onClick={onOpenSearch ?? (() => {})} title="搜索">
@@ -115,6 +134,18 @@ export default function Sidebar({
       {/* 快捷操作 */}
       <div className="px-2 py-2 shrink-0">
         <SectionLabel>快捷操作</SectionLabel>
+        <NavItem
+          onClick={handleOpenLocalVault}
+          active={false}
+          accent
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            <line x1="12" y1="11" x2="12" y2="17" />
+            <line x1="9" y1="14" x2="15" y2="14" />
+          </svg>
+          <span>打开本地仓库</span>
+        </NavItem>
         <NavItem
           onClick={() => handleItemClick("all")}
           active={activeView === "all"}
@@ -406,6 +437,7 @@ function NavItem({
   children,
   onClick,
   active = false,
+  accent = false,
   badge,
   badgeStyle = "muted",
   rightIcon,
@@ -417,6 +449,7 @@ function NavItem({
   children: React.ReactNode;
   onClick: () => void;
   active?: boolean;
+  accent?: boolean;
   badge?: string;
   badgeStyle?: "muted" | "orange" | "accent";
   rightIcon?: React.ReactNode;
@@ -425,8 +458,8 @@ function NavItem({
   indent?: number;
   hasArrow?: boolean;
 }) {
-  const bgColor = active ? "var(--bg-hover)" : "transparent";
-  const textColor = active ? "var(--accent)" : "var(--text-secondary)";
+  const bgColor = accent ? "var(--accent)" : active ? "var(--bg-hover)" : "transparent";
+  const textColor = accent ? "#fff" : active ? "var(--accent)" : "var(--text-secondary)";
 
   return (
     <button
