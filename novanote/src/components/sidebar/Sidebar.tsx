@@ -24,9 +24,11 @@ interface SidebarProps {
   selectedPath: string | null;
   selectedTag: string | null;
   activeView: SidebarView;
+  vaultPath: string | null;
   onSelectFile: (path: string) => void;
   onSelectView: (view: SidebarView) => void;
   onSelectTag: (tag: string) => void;
+  onOpenVault: () => void;
   onCreateNotebook: (name: string) => void;
   onCreateSubdir: (parentDir: string, name: string) => void;
   onNewNote: (parentDir?: string) => void;
@@ -45,9 +47,11 @@ export default function Sidebar({
   selectedPath,
   selectedTag,
   activeView,
+  vaultPath,
   onSelectFile,
   onSelectView,
   onSelectTag,
+  onOpenVault,
   onCreateNotebook,
   onCreateSubdir,
   onNewNote,
@@ -96,16 +100,23 @@ export default function Sidebar({
           我的笔记
         </span>
         <div className="flex items-center gap-1">
-          <IconBtn
-            onClick={() => {
-              setCreatingNotebook(true);
-              setNewNotebookName("");
-            }}
-            title="新建笔记本"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
+          {vaultPath && (
+            <IconBtn
+              onClick={() => {
+                setCreatingNotebook(true);
+                setNewNotebookName("");
+              }}
+              title="新建笔记本"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </IconBtn>
+          )}
+          <IconBtn onClick={onOpenVault} title="打开知识库">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
           </IconBtn>
           <IconBtn onClick={onOpenSearch ?? (() => {})} title="搜索">
@@ -181,20 +192,17 @@ export default function Sidebar({
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
             <p className="text-sm mb-2" style={{ color: "var(--text-muted)" }}>
-              还没有笔记本
+              {vaultPath ? "暂无笔记" : "尚未打开知识库"}
             </p>
             <button
-              onClick={() => {
-                setCreatingNotebook(true);
-                setNewNotebookName("");
-              }}
+              onClick={onOpenVault}
               className="px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors"
               style={{
                 background: "var(--gradient-accent)",
                 color: "#fff",
               }}
             >
-              创建第一个笔记本
+              {vaultPath ? "新建笔记" : "打开知识库"}
             </button>
           </div>
         ) : (
